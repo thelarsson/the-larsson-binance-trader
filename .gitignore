@@ -1,0 +1,60 @@
+# Environment variables (contains API keys!)
+.env
+.env.local
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Logs
+*.log
+*.log.*
+trader.log
+telegram_bot.log
+
+# Data files
+trades.jsonl
+*.jsonl
+.notify-state.json
+.telegram_bot_seen.json
+.telegram_bot_state.json
+.tg_seen.json
+POSITION_SYNC_FIX.md
+
+# Lock files
+.telegram_bot.lock
+*.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Keep references and skill docs
+!references/
+!SKILL.md

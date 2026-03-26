@@ -1,0 +1,1 @@
+#!/bin/bash\ncd /home/johan/.openclaw/workspace/trading-bots/johan-binance-trader\npython3 scripts/trader.py >> trader.log 2>&1
