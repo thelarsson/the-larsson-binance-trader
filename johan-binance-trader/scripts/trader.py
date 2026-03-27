@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Binance Spot Trader — LLM-enhanced autonomous trading bot."""
+"""Binance Spot Trader — LLM-enhanced autonomous trading bot with news sentiment integration."""
 import os, sys, json, time, logging, hmac, hashlib
 from decimal import Decimal, ROUND_DOWN
 from datetime import datetime, timezone
@@ -7,6 +7,29 @@ from pathlib import Path
 from urllib.parse import urlencode
 from dotenv import load_dotenv
 import httpx
+
+# Decision Engine Integration
+USE_DECISION_ENGINE = os.getenv("USE_DECISION_ENGINE", "true").lower() == "true"
+DECISION_SENTIMENT_WEIGHT = float(os.getenv("DECISION_SENTIMENT_WEIGHT", "0.4"))
+
+# Auto-Discovery Integration
+USE_AUTO_DISCOVERY = os.getenv("USE_AUTO_DISCOVERY", "true").lower() == "true"
+DISCOVERY_MIN_SCORE = float(os.getenv("DISCOVERY_MIN_SCORE", "0.3"))
+DISCOVERY_AUTO_ADD = os.getenv("DISCOVERY_AUTO_ADD", "false").lower() == "true"
+
+try:
+    from decision_engine import DecisionEngine, Signal
+    from run_decision_engine import should_enter_trade, should_exit_trade, get_trading_context
+    DECISION_ENGINE_AVAILABLE = True
+except ImportError:
+    DECISION_ENGINE_AVAILABLE = False
+
+try:
+    from auto_discovery import check_for_new_pairs, get_discovered_pairs, get_pair_opportunity, format_discovery_summary
+    DISCOVERY_AVAILABLE = True
+except ImportError:
+    DISCOVERY_AVAILABLE = False
+    DECISION_ENGINE_AVAILABLE = False
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -39,6 +62,7 @@ MAX_TOTAL_ENTRIES_PER_DAY = int(os.getenv("MAX_TOTAL_ENTRIES_PER_DAY", "2"))
 ANTI_CHASE_PCT = float(os.getenv("ANTI_CHASE_PCT", "1.0"))
 REENTRY_COOLDOWN_HOURS = float(os.getenv("REENTRY_COOLDOWN_HOURS", "4"))
 HTF_TREND_MIN_PCT = float(os.getenv("HTF_TREND_MIN_PCT", "0.15"))
+MIN_POSITION_VALUE_USD = float(os.getenv("MIN_POSITION_VALUE_USD", "1.0"))
 
 BASE = "https://api.binance.com"
 TRADES_LOG = Path("trades.jsonl")
@@ -85,9 +109,12 @@ def get_position_state(symbol):
 
 
 def risk_signal(symbol, current_price):
-    position = get_position_state(symbol)
+    position = get_position_state(symbol, verify_binance=True)  # Verify with Binance
     avg_entry = position["avg_entry"]
     if not avg_entry or position["qty"] <= 0:
+        return None, position
+    # Ignore positions under $1
+    if position["qty"] * current_price < MIN_POSITION_VALUE_USD:
         return None, position
 
     stop_price = avg_entry * (1 - SL_PCT / 100)
@@ -109,8 +136,34 @@ def parse_ts(ts):
         return None
 
 
-def current_open_symbols():
-    return {symbol for symbol in PAIRS if get_position_state(symbol)["qty"] > 0}
+def current_open_symbols(current_prices=None):
+    """Get symbols with actual positions on Binance account. Filters out dust positions under $1 USD."""
+    symbols = set()
+
+    # Get actual positions from Binance (source of truth)
+    binance_positions = get_binance_positions()
+
+    for symbol, pos in binance_positions.items():
+        qty = pos.get("qty", 0)
+        if qty <= 0.0001:
+            continue
+        # Check position value (dust filter already applied in get_binance_positions, but double-check)
+        price = current_prices.get(symbol) if current_prices else pos.get("avg_entry", 0)
+        if price and qty * price >= MIN_POSITION_VALUE_USD:
+            symbols.add(symbol)
+
+    # Check configured pairs - but ONLY use Binance as source of truth
+    # Don't add positions that exist locally but not on Binance (manual sales)
+    for symbol in PAIRS:
+        if symbol in binance_positions:
+            # Already handled above
+            continue
+        # If not on Binance, check local history for info only (don't count as open)
+        pos = get_position_state(symbol)
+        if pos["qty"] > 0:
+            log.info(f"{symbol}: Local position exists but not on Binance. Treating as closed.")
+
+    return symbols
 
 
 def trades_today(symbol=None):
@@ -254,65 +307,77 @@ def bollinger(prices, period=20, std_mult=2):
     return sma - std_mult * std, sma, sma + std_mult * std
 
 def llm_sentiment(symbol, klines):
-    if not USE_LLM:
-        return 0.5
-
-    prices = [k["c"] for k in klines[-10:]]
-    vol = [k["v"] for k in klines[-10:]]
-    prompt = f"""Rate market sentiment for {symbol} on a scale from 0.0 (very bearish) to 1.0 (very bullish).
+    """Get sentiment score combining LLM analysis with news sentiment."""
+    # Start with base LLM sentiment
+    base_sentiment = 0.5
+    
+    if USE_LLM:
+        prices = [k["c"] for k in klines[-10:]]
+        vol = [k["v"] for k in klines[-10:]]
+        prompt = f"""Rate market sentiment for {symbol} on a scale from 0.0 (very bearish) to 1.0 (very bullish).
 Use only the structured market data below.
 Last 10 closes: {[round(p,2) for p in prices]}
 Volume trend: {'increasing' if vol[-1] > sum(vol[:-1])/len(vol[:-1]) else 'decreasing'}
 Current RSI: {rsi(prices):.0f}
 Reply with ONLY the numeric score, nothing else."""
 
-    if OLLAMA_MODEL:
+        if OLLAMA_MODEL:
+            try:
+                with httpx.Client(timeout=30) as c:
+                    resp = c.post(
+                        f"{OLLAMA_BASE_URL}/api/chat",
+                        json={
+                            "model": OLLAMA_MODEL,
+                            "stream": False,
+                            "messages": [
+                                {"role": "system", "content": "You output only a single number between 0.0 and 1.0."},
+                                {"role": "user", "content": prompt},
+                            ],
+                        },
+                    )
+                resp.raise_for_status()
+                data = resp.json()
+                text = data.get("message", {}).get("content", "0.5").strip()
+                base_sentiment = float(text.split()[0].strip(".,"))
+            except Exception as exc:
+                log.warning(f"Ollama sentiment fallback (error: {exc})")
+
+        if not OLLAMA_MODEL and LLM_API_KEY:
+            try:
+                with httpx.Client(timeout=30) as c:
+                    resp = c.post(
+                        "https://api.openai.com/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {LLM_API_KEY}", "Content-Type": "application/json"},
+                        json={
+                            "model": "gpt-4o-mini",
+                            "temperature": 0,
+                            "max_tokens": 10,
+                            "messages": [
+                                {"role": "system", "content": "You output only a single number between 0.0 and 1.0."},
+                                {"role": "user", "content": prompt},
+                            ],
+                        },
+                    )
+                resp.raise_for_status()
+                data = resp.json()
+                text = data.get("choices", [{}])[0].get("message", {}).get("content", "0.5").strip()
+                base_sentiment = float(text.split()[0].strip(".,"))
+            except Exception as exc:
+                log.warning(f"OpenAI sentiment fallback (error: {exc})")
+
+    # Incorporate news sentiment from decision engine
+    if USE_DECISION_ENGINE and DECISION_ENGINE_AVAILABLE:
         try:
-            with httpx.Client(timeout=30) as c:
-                resp = c.post(
-                    f"{OLLAMA_BASE_URL}/api/chat",
-                    json={
-                        "model": OLLAMA_MODEL,
-                        "stream": False,
-                        "messages": [
-                            {"role": "system", "content": "You output only a single number between 0.0 and 1.0."},
-                            {"role": "user", "content": prompt},
-                        ],
-                    },
-                )
-            resp.raise_for_status()
-            data = resp.json()
-            text = data.get("message", {}).get("content", "0.5").strip()
-            return float(text.split()[0].strip(".,"))
-        except Exception as exc:
-            log.warning(f"Ollama sentiment fallback (error: {exc})")
-
-    if not LLM_API_KEY:
-        log.warning("USE_LLM is true but neither OLLAMA_MODEL nor OPENAI_API_KEY is set; defaulting sentiment to neutral")
-        return 0.5
-
-    try:
-        with httpx.Client(timeout=30) as c:
-            resp = c.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {LLM_API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "model": "gpt-4o-mini",
-                    "temperature": 0,
-                    "max_tokens": 10,
-                    "messages": [
-                        {"role": "system", "content": "You output only a single number between 0.0 and 1.0."},
-                        {"role": "user", "content": prompt},
-                    ],
-                },
-            )
-        resp.raise_for_status()
-        data = resp.json()
-        text = data.get("choices", [{}])[0].get("message", {}).get("content", "0.5").strip()
-        return float(text.split()[0].strip(".,"))
-    except Exception as exc:
-        log.warning(f"OpenAI sentiment fallback (error: {exc})")
-        return 0.5
+            from sentiment_integration import llm_sentiment_from_news
+            news_sentiment = llm_sentiment_from_news(symbol, default=0.5)
+            # Combine: weight news sentiment based on DECISION_SENTIMENT_WEIGHT
+            combined = base_sentiment * (1 - DECISION_SENTIMENT_WEIGHT) + news_sentiment * DECISION_SENTIMENT_WEIGHT
+            log.info(f"Sentiment: LLM={base_sentiment:.2f}, News={news_sentiment:.2f}, Combined={combined:.2f}")
+            return combined
+        except Exception as e:
+            log.warning(f"News sentiment integration failed: {e}")
+    
+    return base_sentiment
 
 def get_balance(asset="USDT"):
     info = api_get("/api/v3/account", sign({}))
@@ -320,6 +385,99 @@ def get_balance(asset="USDT"):
         if b["asset"] == asset:
             return float(b["free"])
     return 0
+
+
+def get_binance_positions():
+    """Get actual positions from Binance account - the source of truth. Filters out dust positions under $1 USD."""
+    info = api_get("/api/v3/account", sign({}))
+    positions = {}
+    # Get current prices to calculate position values
+    prices_data = api_get("/api/v3/ticker/price")
+    prices = {p['symbol']: float(p['price']) for p in prices_data} if isinstance(prices_data, list) else {}
+    for b in info.get("balances", []):
+        asset = b["asset"]
+        free = float(b.get("free", 0))
+        locked = float(b.get("locked", 0))
+        total = free + locked
+        if total > 0.0001 and asset != "USDT":
+            # Try to get avg price from recent trades
+            symbol = f"{asset}USDT"
+            current_price = prices.get(symbol, 0)
+            position_value = total * current_price
+            # Filter out dust positions under $1 USD
+            if position_value < MIN_POSITION_VALUE_USD:
+                continue
+            avg_entry = None
+            try:
+                trades = api_get("/api/v3/myTrades", sign({"symbol": symbol, "limit": 50}))
+                buy_qty = 0
+                buy_cost = 0
+                for t in trades:
+                    if t.get("isBuyer"):
+                        qty = float(t.get("qty", 0))
+                        price = float(t.get("price", 0))
+                        buy_qty += qty
+                        buy_cost += qty * price
+                if buy_qty > 0:
+                    avg_entry = buy_cost / buy_qty
+            except:
+                pass
+            positions[symbol] = {"qty": total, "avg_entry": avg_entry}
+    return positions
+
+
+def get_position_state(symbol, verify_binance=False, current_price=None):
+    """
+    Get position state from local trade log, optionally verifying with Binance.
+
+    Args:
+        symbol: Trading pair symbol
+        verify_binance: If True, check actual Binance account and warn on mismatch
+        current_price: Current market price for dust position filtering (optional)
+    """
+    qty = 0.0
+    cost = 0.0
+    for row in load_trade_history():
+        if row.get("symbol") != symbol or row.get("result") != "FILLED":
+            continue
+        side = row.get("side")
+        trade_qty = float(row.get("qty", 0) or 0)
+        trade_price = float(row.get("price", 0) or 0)
+        if side == "BUY":
+            qty += trade_qty
+            cost += trade_qty * trade_price
+        elif side == "SELL":
+            sell_qty = min(qty, trade_qty)
+            avg_price = (cost / qty) if qty > 0 else 0
+            cost -= sell_qty * avg_price
+            qty -= sell_qty
+            if qty <= 1e-12:
+                qty = 0.0
+                cost = 0.0
+    avg_entry = (cost / qty) if qty > 0 else None
+
+    # Filter out dust positions under $1 USD
+    if current_price and qty > 0:
+        position_value = qty * current_price
+        if position_value < MIN_POSITION_VALUE_USD:
+            qty = 0.0
+            cost = 0.0
+            avg_entry = None
+
+    # Verify with Binance if requested
+    if verify_binance:
+        try:
+            binance_positions = get_binance_positions()
+            binance_qty = binance_positions.get(symbol, {}).get("qty", 0)
+            if abs(qty - binance_qty) > 0.0001:
+                log.warning(f"{symbol}: Position mismatch! Local: {qty:.6f}, Binance: {binance_qty:.6f}. Using Binance value.")
+                # Update local calculation to match Binance reality
+                qty = binance_qty
+                cost = binance_qty * (avg_entry or 0)
+        except Exception as e:
+            log.warning(f"Could not verify position with Binance: {e}")
+
+    return {"qty": qty, "cost": cost, "avg_entry": avg_entry}
 
 def place_order(symbol, side, quantity, extra=None, market_price=None):
     qty_str, qty_error = format_quantity(symbol, quantity, market_price)
@@ -381,7 +539,24 @@ def mean_reversion_signal(klines):
     return "HOLD"
 
 def run():
-    log.info(f"Strategy: {STRATEGY} | Pairs: {PAIRS} | Interval: {KLINE_INTERVAL} | HTF: {HTF_INTERVAL} | AntiChase: {ANTI_CHASE_PCT}% | HTFMinGap: {HTF_TREND_MIN_PCT}% | LLM: {USE_LLM}")
+    log.info(f"Strategy: {STRATEGY} | Pairs: {PAIRS} | Interval: {KLINE_INTERVAL} | HTF: {HTF_INTERVAL} | AntiChase: {ANTI_CHASE_PCT}% | HTFMinGap: {HTF_TREND_MIN_PCT}%")
+    log.info(f"LLM: {USE_LLM} | Decision Engine: {USE_DECISION_ENGINE and DECISION_ENGINE_AVAILABLE} | Sentiment Weight: {DECISION_SENTIMENT_WEIGHT}")
+    
+    # Auto-discovery: Check for new opportunities
+    active_pairs = list(PAIRS)
+    if USE_AUTO_DISCOVERY and DISCOVERY_AVAILABLE:
+        try:
+            new_pairs = check_for_new_pairs(active_pairs)
+            if new_pairs:
+                log.info(f"🔍 Discovery: Found {len(new_pairs)} new opportunities: {new_pairs}")
+                if DISCOVERY_AUTO_ADD:
+                    active_pairs = active_pairs + new_pairs
+                    log.info(f"🔍 Discovery: Auto-added pairs, now trading: {active_pairs}")
+                else:
+                    log.info(f"🔍 Discovery: Consider adding to PAIRS: {','.join(new_pairs)}")
+        except Exception as e:
+            log.warning(f"Discovery check failed: {e}")
+    
     balance = get_balance("USDT")
     log.info(f"USDT balance: ${balance:.2f}")
 
@@ -396,8 +571,14 @@ def run():
 
     reserve_usdt = balance * (USDT_RESERVE_PCT / 100)
 
-    for symbol in PAIRS:
+    for symbol in active_pairs:
         try:
+            # Check if pair is discoverable
+            if USE_AUTO_DISCOVERY and DISCOVERY_AVAILABLE:
+                opp = get_pair_opportunity(symbol)
+                if opp:
+                    log.info(f"  Discovery data: score={opp.get('combined_score', 0):+.2f} news={opp.get('news_mentions', 0)}x {opp.get('news_sentiment', 'NEUTRAL')}")
+            
             klines = get_klines(symbol, KLINE_INTERVAL, 50)
             if not klines:
                 continue
@@ -413,6 +594,8 @@ def run():
                 signal = "HOLD"
 
             current_price = klines[-1]["c"]
+            current_prices = {symbol: current_price}
+            open_symbols = current_open_symbols(current_prices)
             risk_event, position = risk_signal(symbol, current_price)
             avg_entry = position["avg_entry"]
             if avg_entry:
@@ -427,7 +610,7 @@ def run():
 
             if risk_event in {"STOP_LOSS", "TAKE_PROFIT"}:
                 held = get_balance(symbol.replace("USDT", ""))
-                if held * current_price > 10:
+                if held * current_price > MIN_POSITION_VALUE_USD:
                     log.info(f"  Risk exit triggered: {risk_event}")
                     place_order(symbol, "SELL", held, {"exit_reason": risk_event})
                 else:
@@ -435,7 +618,8 @@ def run():
                 continue
 
             if signal == "BUY":
-                open_symbols = current_open_symbols()
+                # Get current positions from Binance (source of truth) before making decisions
+                open_symbols = current_open_symbols({symbol: current_price})
                 if symbol in open_symbols:
                     log.info("  Skip BUY: already holding this pair")
                     continue
@@ -454,6 +638,17 @@ def run():
                 if total_entries_today >= MAX_TOTAL_ENTRIES_PER_DAY:
                     log.info(f"  Skip BUY: total daily entry cap reached ({total_entries_today})")
                     continue
+
+                # Decision engine check
+                if USE_DECISION_ENGINE and DECISION_ENGINE_AVAILABLE:
+                    try:
+                        should_enter, reason = should_enter_trade(symbol, "long")
+                        if not should_enter:
+                            log.info(f"  Decision Engine VETO — {reason}")
+                            continue
+                        log.info(f"  Decision Engine: {get_trading_context(symbol)}")
+                    except Exception as e:
+                        log.warning(f"  Decision engine check failed: {e}")
 
                 if USE_LLM:
                     sentiment = llm_sentiment(symbol, klines)
@@ -476,6 +671,20 @@ def run():
                     log.info(f"  Skip BUY: usable trade size ${trade_usdt:.2f} below $10 minimum")
 
             elif signal == "SELL":
+                # Decision engine early exit check
+                if USE_DECISION_ENGINE and DECISION_ENGINE_AVAILABLE and avg_entry:
+                    try:
+                        should_exit, reason = should_exit_trade(symbol, "long")
+                        if should_exit:
+                            log.info(f"  Decision Engine early exit: {reason}")
+                            base_asset = symbol.replace("USDT", "")
+                            held = get_balance(base_asset)
+                            if held * current_price > MIN_POSITION_VALUE_USD:
+                                place_order(symbol, "SELL", held, {"exit_reason": f"DECISION_ENGINE: {reason}"})
+                                continue
+                    except Exception as e:
+                        log.warning(f"  Decision engine exit check failed: {e}")
+                
                 base_asset = symbol.replace("USDT", "")
                 held = get_balance(base_asset)
                 if held * current_price > 10:

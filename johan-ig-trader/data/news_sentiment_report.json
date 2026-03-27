@@ -1,0 +1,81 @@
+{
+  "timestamp": "2026-03-25T19:44:16.677984+00:00",
+  "summary": {
+    "overall_sentiment": "BULLISH",
+    "strength": 1.0,
+    "confidence": 0.36,
+    "articles_total": 24,
+    "breakdown": {
+      "bullish": 6,
+      "bearish": 0,
+      "neutral": 18
+    },
+    "top_signals": [
+      "buy",
+      "growth",
+      "sell-off"
+    ]
+  },
+  "market_analysis": {
+    "SP500": {
+      "signal": 1.0,
+      "epic": "IX.D.SPTRD.IFE.IP",
+      "bullish": 6,
+      "bearish": 0,
+      "mentions": 16,
+      "action": "BULLISH"
+    }
+  },
+  "recent_headlines": [
+    {
+      "title": "- link \"Go Big or Go Small? IWM Targets Small-Cap Stocks; MGK Owns Big Tech Stocks\" [ref=e62]",
+      "source": "yahoo_finance",
+      "ts": "2026-03-25T19:43:49.112657+00:00"
+    },
+    {
+      "title": "- heading \"Go Big or Go Small? IWM Targets Small-Cap Stocks; MGK Owns Big Tech Stocks\" [level=2, ref=e120]",
+      "source": "yahoo_finance",
+      "ts": "2026-03-25T19:43:49.112682+00:00"
+    },
+    {
+      "title": "- link \"5 Ripple Effects From the Strait of Hormuz Blockade Affecting Energy Stocks\" [ref=e80]",
+      "source": "yahoo_finance",
+      "ts": "2026-03-25T19:43:49.112737+00:00"
+    },
+    {
+      "title": "- link \"5 Ripple Effects From the Strait of Hormuz Blockade Affecting Energy Stocks\" [ref=e81]",
+      "source": "yahoo_finance",
+      "ts": "2026-03-25T19:43:49.112742+00:00"
+    },
+    {
+      "title": "- heading \"5 Ripple Effects From the Strait of Hormuz Blockade Affecting Energy Stocks\" [level=3, ref=e123]",
+      "source": "yahoo_finance",
+      "ts": "2026-03-25T19:43:49.112748+00:00"
+    },
+    {
+      "title": "- link \"Iran's Attacks on Qatar's Energy Infrastructure Could Have Long-Term Impacts on the Energy Market. These 3 LNG Stocks Could Capitalize on the Opportunity.\" [ref=e112]",
+      "source": "yahoo_finance",
+      "ts": "2026-03-25T19:43:49.112860+00:00"
+    },
+    {
+      "title": "- link \"Iran's Attacks on Qatar's Energy Infrastructure Could Have Long-Term Impacts on the Energy Market. These 3 LNG Stocks Could Capitalize on the Opportunity.\" [ref=e113]",
+      "source": "yahoo_finance",
+      "ts": "2026-03-25T19:43:49.112866+00:00"
+    },
+    {
+      "title": "- heading \"Iran's Attacks on Qatar's Energy Infrastructure Could Have Long-Term Impacts on the Energy Market. These 3 LNG Stocks Could Capitalize on the Opportunity.\" [level=3, ref=e130]",
+      "source": "yahoo_finance",
+      "ts": "2026-03-25T19:43:49.112873+00:00"
+    },
+    {
+      "title": "- link \"With the Stock Down Roughly 60% Over the Past 5 Years, Should Investors Buy Nike Before March 31?\" [ref=e145]",
+      "source": "yahoo_finance",
+      "ts": "2026-03-25T19:43:49.112919+00:00"
+    },
+    {
+      "title": "- link \"With the Stock Down Roughly 60% Over the Past 5 Years, Should Investors Buy Nike Before March 31?\" [ref=e146]",
+      "source": "yahoo_finance",
+      "ts": "2026-03-25T19:43:49.112922+00:00"
+    }
+  ]
+}

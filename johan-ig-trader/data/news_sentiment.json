@@ -1,0 +1,26 @@
+{
+  "signal": 1.0,
+  "confidence": 0.36,
+  "action": "BULLISH",
+  "key_signals": [
+    "buy",
+    "growth",
+    "sell-off"
+  ],
+  "articles_analyzed": 24,
+  "breakdown": {
+    "bullish": 6,
+    "bearish": 0,
+    "neutral": 18
+  },
+  "market_signals": {
+    "SP500": {
+      "signal": 1.0,
+      "epic": "IX.D.SPTRD.IFE.IP",
+      "bullish": 6,
+      "bearish": 0,
+      "mentions": 16,
+      "action": "BULLISH"
+    }
+  }
+}
