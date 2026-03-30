@@ -387,20 +387,22 @@ def handle_command(cmd):
         return "\n".join(messages)
     
     elif cmd == '/uptime':
-        # Find the actual running trader process
+        """Check uptime of trading bot."""
         try:
-            r = subprocess.run(['pgrep', '-f', 'python3 scripts/trader.py'],
+            # Find the main trader process
+            r = subprocess.run(['pgrep', '-f', 'trader'],
                               capture_output=True, text=True, timeout=5)
-            if r.stdout.strip():
+            if r.returncode == 0 and r.stdout.strip():
+                # Get the first PID
                 pid = r.stdout.strip().split('\n')[0]
                 r2 = subprocess.run(['ps', '-p', pid, '-o', 'etime='],
                                    capture_output=True, text=True, timeout=5)
-                uptime = r2.stdout.strip() if r2.returncode == 0 else "Unknown"
-            else:
-                uptime = "Not running"
-        except:
-            uptime = "Not running"
-        return f"⏱️ *Uptime*: `{uptime}`"
+                if r2.returncode == 0:
+                    uptime = r2.stdout.strip()
+                    return f"⏱️ *Uptime*: `{uptime}`\n✅ Trading bot is running"
+            return "⏱️ *Uptime*: `Not running`\n❌ Trading bot is not active"
+        except Exception as e:
+            return f"⏱️ *Uptime*: `Error`\n⚠️ {str(e)[:30]}"
     
     elif cmd == '/sentiment':
         """Get news sentiment report."""
@@ -470,12 +472,41 @@ def handle_command(cmd):
             return "\n".join(lines)
         except Exception as e:
             return f"🔍 *Discovery*: Error reading data - {str(e)[:50]}"
+
+    elif cmd == '/pairs':
+        """Show current PAIRS list from .env"""
+        try:
+            env_file = TRADER_DIR / '.env'
+            pairs_line = "Not configured"
+            if env_file.exists():
+                with open(env_file) as f:
+                    for line in f:
+                        if line.startswith('PAIRS='):
+                            pairs_line = line.strip().split('=', 1)[1]
+                            break
+            
+            pairs = pairs_line.split(',') if ',' in pairs_line else [pairs_line]
+            
+            lines = ["📋 *Current PAIRS List*:", ""]
+            lines.append(f"Total: {len(pairs)} trading pairs")
+            lines.append("")
+            
+            for i, pair in enumerate(pairs, 1):
+                lines.append(f"{i}. `{pair}`")
+            
+            lines.append("")
+            lines.append("_(Updates automatically every hour based on scores)_")
+            
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ Error reading PAIRS: {str(e)[:50]}"
     
     elif cmd == '/help':
         return ("📋 *Commands*:\n"
                 "/status - Full bot status\n"
                 "/positions - Show positions (synced with Binance)\n"
                 "/balance - USDT balance (live from Binance)\n"
+                "/pairs - Show current PAIRS list\n"
                 "/sync - Sync/verify positions with Binance\n"
                 "/uptime - Bot uptime\n"
                 "/sentiment - News sentiment report\n"
