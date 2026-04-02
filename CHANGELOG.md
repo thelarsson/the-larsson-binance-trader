@@ -1,61 +1,70 @@
 # Changelog
 
-All notable changes to the Binance Trading Bot.
+Alla viktiga ändringar i detta projekt kommer att dokumenteras här.
 
-## [2026-03-29] - Dynamic PAIRS and Telegram Integration
+Formatet är baserat på [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-### Added
-- **Dynamic PAIRS System**: Automatically updates PAIRS list hourly based on discovery engine scores
-- **Auto-Discovery Reports**: Discovery reports now sent to Telegram trading bot automatically
-- **Sentiment Reports**: Crypto sentiment analysis reports sent to Telegram hourly
-- **New Commands**:
-  - `/pairs` - Show current PAIRS list from .env
-  - `/sync` - Sync positions with Binance API
-- **Monitoring Scripts**:
-  - `check_and_restart_bot.sh` - Monitors and auto-restarts trading bot if down
-  - `check_telegram_bot.sh` - Monitors Telegram bot status
+## [Unreleased]
 
-### Changed
-- **Telegram Bot**: 
-  - Added automatic position syncing with Binance API
-  - Fixed `/uptime` command to correctly detect trading bot process
-  - Added chat message handling for non-command interactions
-- **Cron Jobs**: Added hourly checks for both trading and Telegram bots
-- **Process Detection**: Improved uptime detection using `pgrep` with better fallbacks
+## [1.1.0] - 2026-04-02
 
-### Fixed
-- **Permission Issues**: Fixed script execution permissions for monitoring
-- **Process Uptime**: Now correctly finds `trader_continuous.sh` process instead of failing
+### Tillagt
+- **Weekly LLM Analysis System**: Automatisk veckoanalys med qwen2.5:14b som genererar PDF-rapporter
+  - `scripts/weekly_llm_analyzer.py` - Huvudanalys-skript
+  - `scripts/weekly_analysis.sh` - Shell-wrapper för cron
+  - Cron-jobb: Varje fredag 17:00 UAE
+  - Analyserar: Performance, strategi, risk, kodkvalitet
+  - Skickar PDF till Telegram
 
-## [2026-03-27] - Initial Trading Bot Setup
+- **Dynamisk PAIRS-uppdatering**: Automatisk uppdatering av trading pairs baserat på discovery engine
+  - `update_dynamic_pairs.py` - Uppdaterar .env med top-scoring pairs
+  - Min_score: 0.05, max_pairs: 8
+  - Inkluderar alltid BTCUSDT som anchor
 
-### Added
-- Basic trading bot with momentum strategy
-- Telegram integration with commands: `/status`, `/positions`, `/balance`, `/uptime`
-- Decision engine combining technical (60%) and sentiment (40%) analysis
-- Discovery engine for automatic currency detection
-- Sentiment analysis using local LLM (llama3.2:3b)
+- **Crypto News Scraper förbättringar**:
+  - `send_sentiment_report.py` - Skickar sentiment-rapport till Telegram
+  - `send_discovery_report.py` - Skickar discovery-rapport till Telegram
+  - `discovery_silent.py` - Tyst variant som inte skriver till OpenClaw chat
+  - Cron-jobb: Varje timme för både sentiment och discovery
 
-## Configuration
+- **Morning Status Report**: Daglig systemrapport kl 08:00
+  - Fedora systemstatus (CPU, RAM, disk, uptime)
+  - Trading bot status och positioner
+  - Discovery och Sentiment status
+  - AgentMail sammanfattning
 
-### Current PAIRS
-Dynamic - updates hourly based on top-scoring pairs from discovery engine.
+- **AgentMail Handler**: Automatisk email-hantering
+  - Kör var 4:e timme
+  - Hanterar mail från godkända avsändare (johan@the-larsson.com, johan.larsson@dafo-middle-east.com)
+  - Auto-reply till andra avsändare eller forward till dig
+  - Begränsat till 1 svar per thread
+  - Raderar mail äldre än 30 dagar
 
-### Cron Jobs
-| Job | Schedule | Description |
-|-----|----------|-------------|
-| Trading Bot Monitor | Every hour | Restarts trading bot if down |
-| Telegram Bot Monitor | Every 5 minutes | Checks Telegram bot status |
+- **Dokumentation**:
+  - `DOCUMENTATION.md` - Svensk dokumentation
+  - `DOCUMENTATION_EN.md` - Engelsk dokumentation
+  - Professionella PDF-versioner genererade
 
-## How to Update
+### Ändrat
+- **Sentiment rapport format**: Uppdaterad för att visa Key Headlines, Breakdown, och Trading Signal korrekt
+- **Discovery tyst körning**: Alla cron-jobb omdirigerar stdout för att förhindra OpenClaw capture
+- **Trading bot konfiguration**: 
+  - TRADE_SIZE_PCT: 15% (för balanserad risk)
+  - TAKE_PROFIT_PCT: 3% / STOP_LOSS_PCT: 2% (baserat på backtesting)
 
-```bash
-cd ~/.openclaw/workspace/trading-bots/johan-binance-trader
-git pull origin master
+### Fixat
+- Rättat JSON-parsning i send_sentiment_report.py för korrekt visning av breakdown-data
+- AgentMail PATH-problem i cron (lagt till full PATH i run_crypto_silent.sh)
+- Email-thread hantering för att förhindra dubbla svar
 
-# Restart services
-pkill -f trader_continuous
-pkill -f telegram_bot
-./scripts/trader_continuous.sh &
-python3 scripts/telegram_bot.py &
-```
+## [1.0.0] - 2026-03-25
+
+### Tillagt
+- Initial release av The Larsson Binance Trader
+- Momentum-strategi med EMA crossover (EMA9/EMA20)
+- Telegram integration för notifikationer
+- Risk management: 2% stop-loss, 3% take-profit
+- Max 2 positioner, 15% trade size
+- Sentiment integration från crypto news
+- Discovery engine för nya trading pairs
+- Automatisk positionssynkronisering med Binance
