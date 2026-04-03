@@ -501,6 +501,89 @@ def handle_command(cmd):
         except Exception as e:
             return f"❌ Error reading PAIRS: {str(e)[:50]}"
     
+    elif cmd == '/abort_switch':
+        """Abort pending strategy switch"""
+        import sys
+        sys.path.insert(0, str(TRADER_DIR / 'scripts'))
+        try:
+            from auto_strategy_switcher import ProductionStrategySwitcher
+            switcher = ProductionStrategySwitcher()
+            if switcher.abort_pending_switch():
+                return "✅ *Strategy switch ABORTED*\n\nCurrent strategy remains active. No changes made."
+            else:
+                return "ℹ️ No pending strategy switch to abort."
+        except Exception as e:
+            return f"❌ Error: {e}"
+    
+    elif cmd == '/confirm_switch':
+        """Confirm pending strategy switch immediately"""
+        import sys
+        sys.path.insert(0, str(TRADER_DIR / 'scripts'))
+        try:
+            from auto_strategy_switcher import ProductionStrategySwitcher
+            switcher = ProductionStrategySwitcher()
+            if switcher.confirm_early():
+                return "✅ *Strategy switch CONFIRMED and EXECUTED*\n\nNew strategy is now active."
+            else:
+                return "ℹ️ No pending strategy switch to confirm."
+        except Exception as e:
+            return f"❌ Error: {e}"
+    
+    elif cmd == '/strategy_status':
+        """Check current strategy and pending switches"""
+        import sys
+        import json
+        sys.path.insert(0, str(TRADER_DIR / 'scripts'))
+        
+        lines = ["📊 *Strategy Status*", ""]
+        
+        # Load current strategy
+        state_file = TRADER_DIR / '.strategy_switcher_state.json'
+        if state_file.exists():
+            with open(state_file) as f:
+                data = json.load(f)
+                current = data.get('current_strategy', 'EMA_CROSSOVER')
+                last_update = data.get('last_updated', 'Unknown')
+                switches = data.get('switches_this_week', 0)
+                
+                lines.append(f"Current Strategy: *{current}*")
+                lines.append(f"Last Updated: {last_update[:16] if last_update != 'Unknown' else 'Unknown'}")
+                lines.append(f"Switches This Week: {switches}/1")
+        else:
+            lines.append("Current Strategy: *EMA_CROSSOVER* (default)")
+        
+        lines.append("")
+        
+        # Check pending
+        pending_file = TRADER_DIR / '.pending_strategy_switch.json'
+        if pending_file.exists():
+            try:
+                with open(pending_file) as f:
+                    data = json.load(f)
+                    if data.get('status') != 'aborted':
+                        proposed = data.get('proposed_strategy', 'Unknown')
+                        execute_after = data.get('execute_after', '')
+                        improvement = data.get('expected_improvement', 0)
+                        
+                        lines.append("⚠️ *PENDING SWITCH*:")
+                        lines.append(f"Proposed: *{proposed}*")
+                        lines.append(f"Expected Improvement: *{improvement:.2f}%*")
+                        if execute_after:
+                            lines.append(f"Auto-execute at: *{execute_after[11:16] if len(execute_after) > 16 else 'Unknown'} UTC*")
+                        lines.append("")
+                        lines.append("To abort: */abort_switch*")
+                        lines.append("To confirm now: */confirm_switch*")
+                    else:
+                        lines.append("✅ No pending switches")
+            except:
+                lines.append("✅ No pending switches")
+        else:
+            lines.append("✅ No pending switches")
+        
+        lines.append("")
+        lines.append("Analysis runs daily at 08:00 UTC")
+        return "\n".join(lines)
+    
     elif cmd == '/help':
         return ("📋 *Commands*:\n"
                 "/status - Full bot status\n"
@@ -511,6 +594,9 @@ def handle_command(cmd):
                 "/uptime - Bot uptime\n"
                 "/sentiment - News sentiment report\n"
                 "/discovery - Trading opportunities\n"
+                "/strategy_status - Check current strategy and pending switches\n"
+                "/abort_switch - Cancel pending strategy switch\n"
+                "/confirm_switch - Execute pending switch immediately\n"
                 "/help - This message")
     
     else:

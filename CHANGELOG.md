@@ -6,6 +6,45 @@ Formatet är baserat på [Keep a Changelog](https://keepachangelog.com/en/1.0.0/
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-04-03
+
+### Tillagt (MAJOR FEATURE)
+- **Auto Strategy Switcher**: Automatisk strategi-växling baserad på marknadsanalys
+  - `scripts/auto_strategy_switcher.py` - Produktions-klar strategi-väljare
+  - Analyserar BTC, ETH, SOL, CTSI dagligen kl 08:00 UTC
+  - Jämför EMA Crossover, MACD, och RSI strategier
+  - Växlar automatiskt till bäst presterande strategi (om du inte stoppar)
+  - Telegram integration: `/strategy_status`, `/abort_switch`, `/confirm_switch`
+  - Säkerhetsgränser: Max 1 byte/vecka, minst 7% förbättring krävs
+  - Opt-out system: Byter automatiskt om du inte svarar inom 1 timme
+  - Ingen cooldown efter strategi-byte
+  
+- **Test-miljö för strategi-analys**:
+  - `intelligent_strategy_switcher_v2.py` - Komplett analys-system
+  - `adaptive_strategy_engine.py` - Marknadsfaser och strategi-urval
+  - Backtestar med transaktionskostnader (0.1% fee + 0.05% spread)
+  - Caching av API-anrop för prestanda
+  - Felhantering och loggning till fil
+  
+- **Test-resultat (180 dagars backtest)**:
+  - BTC: EMA +8.64% (vinnare)
+  - ETH: MACD +7.72% (vinnare)  
+  - SOL: EMA +3.27% (vinnare)
+  - CTSI: MACD +18.91% (vinnare)
+  
+### Ändrat
+- **Telegram Bot**: Nya kommandon för strategi-hantering
+  - `/strategy_status` - Visa nuvarande strategi och pending byten
+  - `/abort_switch` - Avbryt planerat byte
+  - `/confirm_switch` - Utför byte omedelbart
+  
+### Tekniska förbättringar
+- Async HTTP requests för Binance API-anrop
+- Caching (5-min TTL) för att minska API-anrop
+- Omfattande felhantering med specifika exceptions
+- Loggning till fil (`auto_strategy_switcher.log`)
+- Separerade klasser för bättre testbarhet
+
 ## [1.1.0] - 2026-04-02
 
 ### Tillagt
