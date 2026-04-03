@@ -28,7 +28,7 @@ from intelligent_strategy_switcher_v2 import (
 SCRIPT_DIR = Path(__file__).parent.parent
 STATE_FILE = SCRIPT_DIR / '.strategy_switcher_state.json'
 PENDING_FILE = SCRIPT_DIR / '.pending_strategy_switch.json'
-NOTIFICATION_COOLDOWN = 3600  # 1 hour to respond
+NOTIFICATION_COOLDOWN = 300  # 5 min to respond (for 2x daily)
 
 # Setup logging
 logging.basicConfig(
