@@ -218,7 +218,7 @@ class AutoStrategySwitcher:
     
     def _can_switch(self) -> bool:
         switches = self._get_switches_last_3_days()
-        if switches >= self.MAX_SWITCHES_PER_WEEK:
+        if switches >= self.MAX_SWITCHES_PER_3_DAYS:
             logger.info(f"Max switches reached: {switches}")
             return False
         return True
