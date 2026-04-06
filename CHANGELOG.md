@@ -6,6 +6,30 @@ Formatet är baserat på [Keep a Changelog](https://keepachangelog.com/en/1.0.0/
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-04-06
+
+### Tillagt
+- **Execute Function för Auto Strategy Switcher**:
+  - Byte sker automatiskt efter 5 minuter om inte `/abort_switch` körs
+  - Sparar pending switch till `.pending_strategy_switch.json`
+  - Uppdaterar `.env` filen vid byte (STRATEGY=variabel)
+  - Sparar state i `.strategy_switcher_state.json`
+  - Hanterar abort via `/abort_switch` kommando
+  - Skickar "Strategy switched" bekräftelse till Telegram
+
+### Ändrat
+- **Switch limit**: Från 1/vecka till **1/3 dagar** för ökad flexibilitet
+  - Mer responsiv vid marknadsändringar
+  - Kostnad: ~0.045% per byte (0.3% av 15% position)
+  - Realistisk årlig kostnad: ~2.7% vid ~60 byten/år
+  - Fortfarande skydd mot övertrading
+
+### Säkerhet
+- Max 1 byte per 3 dagar (justerbart)
+- Minst 7% förbättring krävs för byte
+- 5 minuters opt-out fönster
+- Stop-loss skyddar varje trade individuellt (-2%)
+
 ## [1.2.0] - 2026-04-03
 
 ### Tillagt (MAJOR FEATURE)
