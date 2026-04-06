@@ -1,34 +1,23 @@
 #!/usr/bin/env python3
 """
-Auto Strategy Switcher - Production Version
-Opt-out system: Switches automatically unless stopped
-
-⚠️ WARNING: This affects REAL trades and REAL money
+Auto Strategy Switcher - WITH EXECUTE FUNCTION
+Production Version with Execute Function - IMPLEMENTED
 """
 
 import json
 import httpx
-import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
-import sys
-import os
-
-# Add parent to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent / 'trading-bot-tests'))
-from intelligent_strategy_switcher_v2 import (
-    IntelligentStrategySwitcher, 
-    SwitchDecision,
-    TEST_DIR
-)
+import statistics
 
 # Configuration
 SCRIPT_DIR = Path(__file__).parent.parent
 STATE_FILE = SCRIPT_DIR / '.strategy_switcher_state.json'
 PENDING_FILE = SCRIPT_DIR / '.pending_strategy_switch.json'
-NOTIFICATION_COOLDOWN = 300  # 5 min to respond (for 2x daily)
+ABORT_FILE = SCRIPT_DIR / '.abort_switch_requested'
+NOTIFICATION_COOLDOWN = 300  # 5 min to respond
 
 # Setup logging
 logging.basicConfig(
@@ -41,25 +30,146 @@ logging.basicConfig(
 )
 logger = logging.getLogger('AutoStrategySwitcher')
 
+# Binance API
+BINANCE_API = "https://api.binance.com"
 
-class ProductionStrategySwitcher:
-    """
-    Production-ready strategy switcher with opt-out mechanism
-    """
+
+class TechnicalIndicators:
+    """Technical indicators for analysis"""
+    
+    @staticmethod
+    def calculate_ema(prices: List[float], period: int) -> List[float]:
+        if len(prices) < period:
+            return prices
+        multiplier = 2 / (period + 1)
+        ema = [sum(prices[:period]) / period]
+        for price in prices[period:]:
+            ema.append((price - ema[-1]) * multiplier + ema[-1])
+        return [prices[0]] * (period - 1) + ema
+    
+    @staticmethod
+    def calculate_rsi(prices: List[float], period: int = 14) -> List[float]:
+        if len(prices) < period + 1:
+            return [50.0] * len(prices)
+        deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+        rsi_values = [50.0] * len(prices)
+        for i in range(period, len(deltas)):
+            gains = [d for d in deltas[i-period+1:i+1] if d > 0]
+            losses = [-d for d in deltas[i-period+1:i+1] if d < 0]
+            avg_gain = sum(gains) / period if gains else 0
+            avg_loss = sum(losses) / period if losses else 0.0001
+            rs = avg_gain / avg_loss
+            rsi_values[i+1] = 100 - (100 / (1 + rs))
+        return rsi_values
+
+
+class MarketAnalyzer:
+    """Analyzes market conditions"""
     
     def __init__(self):
-        self.switcher = IntelligentStrategySwitcher()
+        self.indicators = TechnicalIndicators()
+    
+    def analyze_conditions(self, data: List[Dict]) -> Dict:
+        if len(data) < 50:
+            return {'error': 'Insufficient data'}
+        prices = [d['close'] for d in data]
+        gains = [max(0, prices[-i] - prices[-i-1]) for i in range(1, min(15, len(prices)))]
+        losses = [max(0, prices[-i-1] - prices[-i]) for i in range(1, min(15, len(prices)))]
+        avg_gain = sum(gains) / len(gains) if gains else 0
+        avg_loss = sum(losses) / len(losses) if losses else 0.0001
+        trend_strength = avg_gain / avg_loss
+        ranges = [d['high'] - d['low'] for d in data[-20:]]
+        avg_range = sum(ranges) / len(ranges)
+        avg_price = sum(prices[-20:]) / 20
+        volatility = (avg_range / avg_price) * 100
+        rsi_values = self.indicators.calculate_rsi(prices)
+        return {
+            'trend_strength': trend_strength,
+            'volatility': volatility,
+            'rsi': rsi_values[-1],
+            'current_price': prices[-1]
+        }
+
+
+class StrategyBacktester:
+    """Backtests strategies"""
+    
+    def __init__(self, initial_capital: float = 1000.0):
+        self.initial_capital = initial_capital
+        self.indicators = TechnicalIndicators()
+    
+    def backtest_ema_crossover(self, data: List[Dict]):
+        prices = [d['close'] for d in data]
+        if len(prices) < 30:
+            return {'name': 'EMA_CROSSOVER', 'return_pct': 0, 'trades': 0, 'win_rate': 0}
+        ema_fast = self.indicators.calculate_ema(prices, 9)
+        ema_slow = self.indicators.calculate_ema(prices, 20)
+        capital = self.initial_capital
+        position = 0
+        trades = 0
+        wins = 0
+        for i in range(1, len(prices)):
+            price = prices[i]
+            if ema_fast[i-1] <= ema_slow[i-1] and ema_fast[i] > ema_slow[i]:
+                if position == 0:
+                    position = capital / price
+                    capital = 0
+            elif position > 0:
+                capital = position * price
+                position = 0
+                trades += 1
+                if price > prices[i-1]:
+                    wins += 1
+        final = capital if position == 0 else position * prices[-1]
+        return {
+            'name': 'EMA_CROSSOVER',
+            'return_pct': (final - self.initial_capital) / self.initial_capital * 100,
+            'trades': trades,
+            'win_rate': (wins / trades * 100) if trades > 0 else 0
+        }
+    
+    def backtest_rsi_strategy(self, data: List[Dict]):
+        prices = [d['close'] for d in data]
+        if len(prices) < 20:
+            return {'name': 'RSI_STRATEGY', 'return_pct': 0, 'trades': 0, 'win_rate': 0}
+        rsi = self.indicators.calculate_rsi(prices, 14)
+        capital = self.initial_capital
+        position = 0
+        trades = 0
+        wins = 0
+        for i in range(15, len(prices)):
+            price = prices[i]
+            if rsi[i] < 30 and position == 0:
+                position = capital / price
+                capital = 0
+            elif position > 0:
+                capital = position * price
+                position = 0
+                trades += 1
+                if price > prices[i-1]:
+                    wins += 1
+        final = capital if position == 0 else position * prices[-1]
+        return {
+            'name': 'RSI_STRATEGY',
+            'return_pct': (final - self.initial_capital) / self.initial_capital * 100,
+            'trades': trades,
+            'win_rate': (wins / trades * 100) if trades > 0 else 0
+        }
+
+
+class AutoStrategySwitcher:
+    """Main auto strategy switcher WITH EXECUTE"""
+    
+    def __init__(self):
+        self.analyzer = MarketAnalyzer()
+        self.backtester = StrategyBacktester()
         self.telegram_token = self._load_telegram_token()
         self.telegram_chat_id = self._load_telegram_chat_id()
         self.current_strategy = self._load_current_strategy()
-        
-        # Safety thresholds
-        self.MIN_IMPROVEMENT = 7.0  # 7%
+        self.MIN_IMPROVEMENT = 7.0
         self.MAX_SWITCHES_PER_WEEK = 1
-        self.VOLATILITY_MAX = 5.0  # 5%
-        
+    
     def _load_telegram_token(self) -> str:
-        """Load from .env file"""
         env_file = SCRIPT_DIR / '.env'
         with open(env_file) as f:
             for line in f:
@@ -68,7 +178,6 @@ class ProductionStrategySwitcher:
         return ''
     
     def _load_telegram_chat_id(self) -> str:
-        """Load from .env file"""
         env_file = SCRIPT_DIR / '.env'
         with open(env_file) as f:
             for line in f:
@@ -77,25 +186,24 @@ class ProductionStrategySwitcher:
         return ''
     
     def _load_current_strategy(self) -> str:
-        """Load current strategy from state file"""
         if STATE_FILE.exists():
             with open(STATE_FILE) as f:
                 data = json.load(f)
                 return data.get('current_strategy', 'EMA_CROSSOVER')
         return 'EMA_CROSSOVER'
     
-    def _save_current_strategy(self, strategy: str):
-        """Save current strategy"""
+    def _save_state(self, strategy: str):
+        """Save current strategy state"""
         data = {
             'current_strategy': strategy,
             'last_updated': datetime.now(timezone.utc).isoformat(),
-            'switches_this_week': self._get_switches_this_week()
+            'switches_this_week': self._get_switches_this_week() + 1
         }
         with open(STATE_FILE, 'w') as f:
             json.dump(data, f, indent=2)
+        logger.info(f"State saved: {strategy}")
     
     def _get_switches_this_week(self) -> int:
-        """Count switches in last 7 days"""
         if not STATE_FILE.exists():
             return 0
         with open(STATE_FILE) as f:
@@ -105,81 +213,57 @@ class ProductionStrategySwitcher:
                 last_date = datetime.fromisoformat(last_update)
                 days_ago = (datetime.now(timezone.utc) - last_date).days
                 if days_ago < 7:
-                    return data.get('switches_this_week', 0) + 1
+                    return data.get('switches_this_week', 0)
         return 0
     
     def _can_switch(self) -> bool:
-        """Check if allowed to switch"""
         switches = self._get_switches_this_week()
         if switches >= self.MAX_SWITCHES_PER_WEEK:
-            logger.info(f"Max switches reached this week: {switches}")
+            logger.info(f"Max switches reached: {switches}")
             return False
         return True
     
-    def _send_telegram_notification(self, message: str, urgent: bool = False):
-        """Send notification to Telegram"""
-        try:
-            emoji = "🚨" if urgent else "📊"
-            full_message = f"{emoji} *Auto Strategy Switcher*\n\n{message}"
-            
-            url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
-            payload = {
-                'chat_id': self.telegram_chat_id,
-                'text': full_message,
-                'parse_mode': 'Markdown'
-            }
-            
-            response = httpx.post(url, json=payload, timeout=30)
-            if response.status_code != 200:
-                logger.error(f"Failed to send Telegram: {response.text}")
-            else:
-                logger.info("Telegram notification sent")
-                
-        except Exception as e:
-            logger.error(f"Error sending Telegram: {e}")
-    
-    def _create_pending_switch(self, target_strategy: str, reason: str, expected_improvement: float):
-        """Create pending switch file"""
+    def _save_pending_switch(self, target_strategy: str, improvement: float):
+        """Save pending switch to file"""
         data = {
             'proposed_strategy': target_strategy,
             'current_strategy': self.current_strategy,
-            'reason': reason,
-            'expected_improvement': expected_improvement,
-            'proposed_time': datetime.now(timezone.utc).isoformat(),
             'execute_after': (datetime.now(timezone.utc) + timedelta(seconds=NOTIFICATION_COOLDOWN)).isoformat(),
-            'status': 'pending'
+            'status': 'pending',
+            'expected_improvement': improvement
         }
-        
         with open(PENDING_FILE, 'w') as f:
             json.dump(data, f, indent=2)
-        
-        logger.info(f"Pending switch created: {self.current_strategy} → {target_strategy}")
+        logger.info(f"Pending switch saved: {target_strategy}")
     
     def _check_pending_switch(self) -> Optional[Dict]:
         """Check if there's a pending switch that should execute"""
         if not PENDING_FILE.exists():
             return None
-        
         try:
             with open(PENDING_FILE) as f:
                 data = json.load(f)
             
             if data.get('status') == 'aborted':
-                logger.info("Pending switch was aborted")
                 PENDING_FILE.unlink()
                 return None
             
             execute_time = datetime.fromisoformat(data['execute_after'])
             if datetime.now(timezone.utc) >= execute_time:
                 return data
-            
             return None
-            
         except Exception as e:
             logger.error(f"Error checking pending: {e}")
             return None
     
-    def _execute_strategy_switch(self, target_strategy: str):
+    def _check_abort(self) -> bool:
+        """Check if abort was requested"""
+        if ABORT_FILE.exists():
+            ABORT_FILE.unlink()
+            return True
+        return False
+    
+    def _execute_switch(self, target_strategy: str):
         """Execute the actual strategy switch"""
         try:
             # Update .env file
@@ -187,157 +271,153 @@ class ProductionStrategySwitcher:
             with open(env_file, 'r') as f:
                 lines = f.readlines()
             
-            # Find and update STRATEGY line
             updated = False
             with open(env_file, 'w') as f:
                 for line in lines:
                     if line.startswith('STRATEGY='):
-                        f.write(f'STRATEGY={target_strategy.lower()}\n')
+                        f.write(f'STRATEGY={target_strategy.lower().replace("_strategy", "")}\n')
                         updated = True
+                        logger.info(f"Updated .env: STRATEGY={target_strategy}")
                     else:
                         f.write(line)
-                
-                if not updated:
-                    f.write(f'STRATEGY={target_strategy.lower()}\n')
             
-            # Update state
-            self._save_current_strategy(target_strategy)
+            # Save state
+            self._save_state(target_strategy)
             self.current_strategy = target_strategy
             
             # Remove pending file
             if PENDING_FILE.exists():
                 PENDING_FILE.unlink()
             
-            # Notify
-            self._send_telegram_notification(
+            # Send confirmation
+            self._send_telegram(
                 f"✅ *STRATEGY SWITCHED*\n\n"
                 f"New strategy: *{target_strategy}*\n"
-                f"Activated at: {datetime.now(timezone.utc).strftime('%H:%M UTC')}\n\n"
-                f"Next analysis in 24h.",
-                urgent=False
+                f"Activated at: {datetime.now(timezone.utc).strftime('%H:%M UTC')}\n"
+                f"Next analysis in 12 hours."
             )
             
-            logger.info(f"Strategy switched to {target_strategy}")
+            logger.info(f"Switch executed: {target_strategy}")
+            return True
             
         except Exception as e:
             logger.error(f"Failed to execute switch: {e}")
-            self._send_telegram_notification(
-                f"❌ *SWITCH FAILED*\n\nError: {e}\n\nManual intervention required.",
-                urgent=True
-            )
+            self._send_telegram(f"❌ *SWITCH FAILED*\n\nError: {e}")
+            return False
+    
+    def _send_telegram(self, message: str):
+        """Send Telegram notification"""
+        try:
+            url = f"https://api.telegram.org/bot{self.telegram_token}/sendMessage"
+            payload = {'chat_id': self.telegram_chat_id, 'text': message, 'parse_mode': 'Markdown'}
+            httpx.post(url, json=payload, timeout=30)
+        except Exception as e:
+            logger.error(f"Telegram error: {e}")
+    
+    def _fetch_data(self, symbol: str = 'BTCUSDT', limit: int = 500) -> List[Dict]:
+        try:
+            url = f"{BINANCE_API}/api/v3/klines"
+            params = {'symbol': symbol, 'interval': '1h', 'limit': limit}
+            response = httpx.get(url, params=params, timeout=30)
+            data = response.json()
+            candles = []
+            for d in data:
+                candles.append({
+                    'timestamp': datetime.fromtimestamp(d[0] / 1000, tz=timezone.utc),
+                    'open': float(d[1]), 'high': float(d[2]),
+                    'low': float(d[3]), 'close': float(d[4]),
+                    'volume': float(d[5])
+                })
+            return candles
+        except Exception as e:
+            logger.error(f"Fetch error: {e}")
+            return []
     
     def run_analysis(self):
-        """Main analysis and decision loop"""
+        """Main analysis with EXECUTE logic"""
         logger.info("Starting strategy analysis...")
         
-        # Check if pending switch should execute
+        # STEP 1: Check for pending switches first
         pending = self._check_pending_switch()
         if pending:
-            logger.info(f"Executing pending switch to {pending['proposed_strategy']}")
-            self._execute_strategy_switch(pending['proposed_strategy'])
+            logger.info(f"Found pending switch to {pending['proposed_strategy']}")
+            
+            # Check for abort
+            if self._check_abort():
+                logger.info("Switch aborted by user")
+                pending['status'] = 'aborted'
+                with open(PENDING_FILE, 'w') as f:
+                    json.dump(pending, f)
+                self._send_telegram("❌ Switch aborted by user. Current strategy remains.")
+                return
+            
+            # Execute the switch
+            if self._execute_switch(pending['proposed_strategy']):
+                logger.info("Switch executed successfully")
             return
         
-        # Check if we can switch
+        # STEP 2: Check if we can switch
         if not self._can_switch():
-            logger.info("Switch limit reached, skipping analysis")
+            self._send_telegram(
+                "📊 *Strategy Analysis*\n\n"
+                f"Current: *{self.current_strategy}*\n"
+                "Status: Max switches reached this week\n"
+                "Next analysis: Tomorrow"
+            )
             return
         
-        # Run analysis for each pair
-        pairs = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'NOMUSDT', 'STOUSDT']
+        # STEP 3: Run new analysis
+        pairs = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
         results = []
         
         for pair in pairs:
-            try:
-                recommendation = self.switcher.analyze_and_decide(
-                    symbol=pair,
-                    current_strategy=self.current_strategy
-                )
-                results.append({
-                    'pair': pair,
-                    'decision': recommendation.decision.value,
-                    'target': recommendation.target_strategy,
-                    'improvement': recommendation.expected_improvement
-                })
-            except Exception as e:
-                logger.error(f"Error analyzing {pair}: {e}")
+            data = self._fetch_data(pair, limit=500)
+            if not data:
+                continue
+            ema = self.backtester.backtest_ema_crossover(data)
+            rsi = self.backtester.backtest_rsi_strategy(data)
+            results.append({'pair': pair, 'ema': ema, 'rsi': rsi})
         
-        # Count recommendations
-        switch_count = sum(1 for r in results if r['decision'] == 'switch')
-        stay_count = len(results) - switch_count
+        # Calculate totals
+        ema_total = sum(r['ema']['return_pct'] for r in results)
+        rsi_total = sum(r['rsi']['return_pct'] for r in results)
         
-        logger.info(f"Analysis complete: {switch_count} recommend switch, {stay_count} recommend stay")
+        # Determine best
+        best_strategy = 'EMA_CROSSOVER'
+        best_return = ema_total
+        if rsi_total > best_return:
+            best_strategy = 'RSI_STRATEGY'
+            best_return = rsi_total
         
-        # Decision logic: Switch if majority says switch AND improvement > threshold
-        if switch_count > len(pairs) / 2:
-            # Get average improvement
-            avg_improvement = sum(r['improvement'] for r in results if r['decision'] == 'switch') / switch_count
-            
-            if avg_improvement >= self.MIN_IMPROVEMENT:
-                # Get most recommended strategy
-                from collections import Counter
-                targets = [r['target'] for r in results if r['target']]
-                if targets:
-                    best_strategy = Counter(targets).most_common(1)[0][0]
-                    
-                    # Create pending switch
-                    self._create_pending_switch(
-                        target_strategy=best_strategy,
-                        reason=f"Majority of pairs ({switch_count}/{len(pairs)}) recommend switch",
-                        expected_improvement=avg_improvement
-                    )
-                    
-                    # Send notification
-                    execute_time = (datetime.now(timezone.utc) + timedelta(seconds=NOTIFICATION_COOLDOWN))
-                    self._send_telegram_notification(
-                        f"🚨 *STRATEGY SWITCH PENDING*\n\n"
-                        f"Current: *{self.current_strategy}*\n"
-                        f"Proposed: *{best_strategy}*\n"
-                        f"Expected improvement: *{avg_improvement:.2f}%*\n\n"
-                        f"⚠️ Switch will execute automatically at: *{execute_time.strftime('%H:%M UTC')}*\n\n"
-                        f"To ABORT, reply: */abort_switch*\n"
-                        f"To CONFIRM early, reply: */confirm_switch*\n\n"
-                        f"If no response: switch executes automatically.",
-                        urgent=True
-                    )
-                    
-                    logger.info(f"Pending switch created: {best_strategy}")
-                else:
-                    logger.info("No clear target strategy")
-            else:
-                logger.info(f"Improvement {avg_improvement:.2f}% below threshold {self.MIN_IMPROVEMENT}%")
-        else:
-            logger.info("Majority recommends staying, no action taken")
-    
-    def abort_pending_switch(self):
-        """Abort a pending switch"""
-        if PENDING_FILE.exists():
-            with open(PENDING_FILE, 'w') as f:
-                json.dump({'status': 'aborted'}, f)
-            
-            self._send_telegram_notification(
-                "✅ *SWITCH ABORTED*\n\nStrategy switch cancelled. Current strategy remains active.",
-                urgent=False
+        improvement = best_return - ema_total if self.current_strategy == 'EMA_CROSSOVER' else 0
+        
+        # STEP 4: Decide and act
+        if improvement >= self.MIN_IMPROVEMENT and best_strategy != self.current_strategy:
+            # Save pending and notify
+            self._save_pending_switch(best_strategy, improvement)
+            self._send_telegram(
+                f"🚨 *STRATEGY SWITCH PENDING*\n\n"
+                f"Current: *{self.current_strategy}*\n"
+                f"Proposed: *{best_strategy}*\n"
+                f"Expected: *{improvement:.2f}%*\n\n"
+                f"⚠️ Auto-switch in 5 minutes!\n"
+                f"Reply */abort_switch* to cancel"
             )
-            logger.info("Pending switch aborted")
-            return True
-        return False
-    
-    def confirm_early(self):
-        """Confirm and execute pending switch immediately"""
-        pending = self._check_pending_switch()
-        if pending:
-            self._execute_strategy_switch(pending['proposed_strategy'])
-            return True
-        return False
+        else:
+            self._send_telegram(
+                f"📊 *Strategy Analysis*\n\n"
+                f"Current: *{self.current_strategy}*\n"
+                f"Status: *STAY*\n\n"
+                f"EMA: {ema_total:+.2f}%\n"
+                f"RSI: {rsi_total:+.2f}%\n\n"
+                f"Improvement too small. Next: 12h."
+            )
+        
+        logger.info(f"Analysis complete. Best: {best_strategy}")
 
 
 def main():
-    """Run the auto strategy switcher"""
-    print("🤖 Auto Strategy Switcher - Production")
-    print("⚠️  This will affect REAL trades")
-    print()
-    
-    switcher = ProductionStrategySwitcher()
+    switcher = AutoStrategySwitcher()
     switcher.run_analysis()
 
 
