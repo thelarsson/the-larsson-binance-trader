@@ -167,7 +167,7 @@ class AutoStrategySwitcher:
         self.telegram_chat_id = self._load_telegram_chat_id()
         self.current_strategy = self._load_current_strategy()
         self.MIN_IMPROVEMENT = 7.0
-        self.MAX_SWITCHES_PER_WEEK = 1
+        self.MAX_SWITCHES_PER_3_DAYS = 1
     
     def _load_telegram_token(self) -> str:
         env_file = SCRIPT_DIR / '.env'
@@ -197,13 +197,13 @@ class AutoStrategySwitcher:
         data = {
             'current_strategy': strategy,
             'last_updated': datetime.now(timezone.utc).isoformat(),
-            'switches_this_week': self._get_switches_this_week() + 1
+            'switches_last_3_days': self._get_switches_last_3_days() + 1
         }
         with open(STATE_FILE, 'w') as f:
             json.dump(data, f, indent=2)
         logger.info(f"State saved: {strategy}")
     
-    def _get_switches_this_week(self) -> int:
+    def _get_switches_last_3_days(self) -> int:
         if not STATE_FILE.exists():
             return 0
         with open(STATE_FILE) as f:
@@ -213,11 +213,11 @@ class AutoStrategySwitcher:
                 last_date = datetime.fromisoformat(last_update)
                 days_ago = (datetime.now(timezone.utc) - last_date).days
                 if days_ago < 7:
-                    return data.get('switches_this_week', 0)
+                    return data.get('switches_last_3_days', 0)
         return 0
     
     def _can_switch(self) -> bool:
-        switches = self._get_switches_this_week()
+        switches = self._get_switches_last_3_days()
         if switches >= self.MAX_SWITCHES_PER_WEEK:
             logger.info(f"Max switches reached: {switches}")
             return False
@@ -361,7 +361,7 @@ class AutoStrategySwitcher:
             self._send_telegram(
                 "📊 *Strategy Analysis*\n\n"
                 f"Current: *{self.current_strategy}*\n"
-                "Status: Max switches reached this week\n"
+                "Status: Max switches reached (1 per 3 days)\n"
                 "Next analysis: Tomorrow"
             )
             return
