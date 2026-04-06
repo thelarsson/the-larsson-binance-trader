@@ -448,13 +448,14 @@ def handle_command(cmd):
     
     elif cmd == '/discovery':
         """Get discovery opportunities."""
+        import json as json_module
         try:
             discovery_file = Path('/home/johan/.openclaw/workspace/crypto-news-scraper/discovery_report.json')
             if not discovery_file.exists():
                 return "🔍 *Discovery*: No discovery data available yet."
             
             with open(discovery_file) as f:
-                data = json.load(f)
+                data = json_module.load(f)
             
             opportunities = data.get('opportunities', [])
             if not opportunities:
