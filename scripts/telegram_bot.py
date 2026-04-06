@@ -406,13 +406,14 @@ def handle_command(cmd):
     
     elif cmd == '/sentiment':
         """Get news sentiment report."""
+        import json as json_module
         try:
             sentiment_file = Path('/home/johan/.openclaw/workspace/crypto-news-scraper/crypto_sentiment_report.json')
             if not sentiment_file.exists():
                 return "📰 *Sentiment*: No sentiment data available yet."
             
             with open(sentiment_file) as f:
-                data = json.load(f)
+                data = json_module.load(f)
             
             summary = data.get('summary', {})
             sentiment = summary.get('overall_sentiment', 'Unknown')
