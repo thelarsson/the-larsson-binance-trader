@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Binance Trader Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e1e2e 0%, #2d2d44 100%);
+            color: #fff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 15px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        h1 {
+            font-size: 2.5em;
+            background: linear-gradient(90deg, #00ff88, #00ccff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+        
+        .status {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: bold;
+        }
+        
+        .status.active {
+            background: rgba(0, 255, 136, 0.2);
+            color: #00ff88;
+            border: 1px solid #00ff88;
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid rgba(255,255,255,0.1);
+            transition: transform 0.3s;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            border-color: rgba(0, 255, 136, 0.5);
+        }
+        
+        .card h2 {
+            font-size: 1.2em;
+            margin-bottom: 15px;
+            color: #00ccff;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .balance-amount {
+            font-size: 3em;
+            font-weight: bold;
+            color: #00ff88;
+            text-shadow: 0 0 20px rgba(0, 255, 136, 0.3);
+        }
+        
+        .balance-label {
+            color: #888;
+            margin-top: 5px;
+        }
+        
+        .signal {
+            padding: 10px 15px;
+            margin: 10px 0;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(255,255,255,0.03);
+            border-left: 4px solid;
+        }
+        
+        .signal.HOLD {
+            border-left-color: #ffcc00;
+        }
+        
+        .signal.BUY {
+            border-left-color: #00ff88;
+            background: rgba(0, 255, 136, 0.1);
+        }
+        
+        .signal.SELL {
+            border-left-color: #ff4444;
+            background: rgba(255, 68, 68, 0.1);
+        }
+        
+        .symbol {
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        
+        .price {
+            color: #00ccff;
+            font-family: monospace;
+        }
+        
+        .timestamp {
+            color: #666;
+            font-size: 0.85em;
+        }
+        
+        .trade-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px;
+            margin: 5px 0;
+            background: rgba(255,255,255,0.03);
+            border-radius: 5px;
+        }
+        
+        .trade-item.BUY {
+            border-left: 3px solid #00ff88;
+        }
+        
+        .trade-item.SELL {
+            border-left: 3px solid #ff4444;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        
+        .error {
+            background: rgba(255, 68, 68, 0.2);
+            border: 1px solid #ff4444;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+        
+        .refresh-info {
+            text-align: center;
+            color: #666;
+            font-size: 0.9em;
+            margin-top: 20px;
+        }
+        
+        .icon {
+            width: 24px;
+            height: 24px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 Binance Trader Dashboard</h1>
+            <span id="connection-status" class="status">Connecting...</span>
+        </header>
+        
+        <div class="grid">
+            <div class="card">
+                <h2>💰 Balance</h2>
+                <div id="balance-container" class="loading">Loading...</div>
+            </div>
+            
+            <div class="card">
+                <h2>📈 Latest Signals</h2>
+                <div id="signals-container" class="loading">Loading...</div>
+            </div>
+            
+            <div class="card">
+                <h2>💼 Positions</h2>
+                <div id="positions-container" class="loading">Loading...</div>
+            </div>
+            
+            <div class="card">
+                <h2>🔄 Recent Trades</h2>
+                <div id="trades-container" class="loading">Loading...</div>
+            </div>
+        </div>
+        
+        <div class="refresh-info">
+            <p>Auto-refresh every 5 seconds | Data is READ-ONLY</p>
+            <p id="last-update"></p>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:5000';
+        
+        async function fetchData() {
+            try {
+                // Fetch all data in parallel
+                const [statusRes, tradesRes] = await Promise.all([
+                    fetch(`${API_URL}/api/status`),
+                    fetch(`${API_URL}/api/trades`)
+                ]);
+                
+                const status = await statusRes.json();
+                const trades = await tradesRes.json();
+                
+                updateUI(status, trades);
+                updateConnectionStatus(true);
+                
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                updateConnectionStatus(false);
+            }
+        }
+        
+        function updateUI(status, trades) {
+            // Update balance
+            const balanceContainer = document.getElementById('balance-container');
+            balanceContainer.innerHTML = `
+                <div class="balance-amount">$${status.usdt_balance.toFixed(2)}</div>
+                <div class="balance-label">USDT Available</div>
+            `;
+            
+            // Update signals
+            const signalsContainer = document.getElementById('signals-container');
+            if (status.latest_activity) {
+                const activity = status.latest_activity;
+                signalsContainer.innerHTML = `
+                    <div class="signal ${activity.signal}">
+                        <div>
+                            <div class="symbol">${activity.symbol}</div>
+                            <div class="timestamp">${activity.timestamp}</div>
+                        </div>
+                        <div>
+                            <div class="price">$${activity.price.toFixed(2)}</div>
+                            <div style="text-align: right; font-weight: bold; color: ${activity.signal === 'BUY' ? '#00ff88' : activity.signal === 'SELL' ? '#ff4444' : '#ffcc00'}">${activity.signal}</div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 10px; color: #666; font-size: 0.9em;">
+                        Total signals (24h): ${status.recent_signals}
+                    </div>
+                `;
+            } else {
+                signalsContainer.innerHTML = '<p style="color: #666;">No recent signals</p>';
+            }
+            
+            // Update trades
+            const tradesContainer = document.getElementById('trades-container');
+            if (trades.trades && trades.trades.length > 0) {
+                const recentTrades = trades.trades.slice(-5).reverse();
+                tradesContainer.innerHTML = recentTrades.map(trade => `
+                    <div class="trade-item ${trade.side}">
+                        <span><strong>${trade.side}</strong> ${trade.symbol}</span>
+                        <span>${trade.quantity.toFixed(2)}</span>
+                    </div>
+                `).join('');
+            } else {
+                tradesContainer.innerHTML = '<p style="color: #666;">No recent trades</p>';
+            }
+            
+            // Update positions
+            const positionsContainer = document.getElementById('positions-container');
+            positionsContainer.innerHTML = `
+                <div style="text-align: center; padding: 20px;">
+                    <div style="font-size: 2em; color: #00ccff;">${trades.count_24h || 0}</div>
+                    <div style="color: #666; margin-top: 5px;">Trades (24h)</div>
+                    <div style="margin-top: 15px; display: flex; justify-content: center; gap: 20px;">
+                        <div>
+                            <div style="color: #00ff88; font-size: 1.5em;">${trades.buy_count || 0}</div>
+                            <div style="color: #666; font-size: 0.8em;">BUY</div>
+                        </div>
+                        <div>
+                            <div style="color: #ff4444; font-size: 1.5em;">${trades.sell_count || 0}</div>
+                            <div style="color: #666; font-size: 0.8em;">SELL</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Update timestamp
+            document.getElementById('last-update').textContent = 
+                'Last update: ' + new Date().toLocaleTimeString();
+        }
+        
+        function updateConnectionStatus(connected) {
+            const statusEl = document.getElementById('connection-status');
+            if (connected) {
+                statusEl.textContent = '● LIVE';
+                statusEl.className = 'status active';
+            } else {
+                statusEl.textContent = '● DISCONNECTED';
+                statusEl.style.background = 'rgba(255, 68, 68, 0.2)';
+                statusEl.style.color = '#ff4444';
+                statusEl.style.borderColor = '#ff4444';
+            }
+        }
+        
+        // Initial load
+        fetchData();
+        
+        // Auto-refresh every 5 seconds
+        setInterval(fetchData, 5000);
+    </script>
+</body>
+</html>

@@ -11,11 +11,11 @@ REPORT_FILE="$REPORT_DIR/weekly_analysis_$TIMESTAMP.md"
 
 cd /home/johan/.openclaw/workspace/trading-bots/johan-binance-trader
 
-# Run analysis python script
-python3 << 'PYTHON_EOF'
+# Generate report with Python and save directly to file
+python3 > "$REPORT_FILE" << 'PYTHON_EOF'
 import json
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re
 
@@ -63,8 +63,19 @@ def analyze_trading_bot():
             report.append("")
             
             # Recent trades (last 7 days)
-            week_ago = datetime.now() - timedelta(days=7)
-            recent_trades = [t for t in trades if datetime.fromisoformat(t.get('ts', '2020-01-01').replace('Z', '+00:00')) > week_ago]
+            week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+            recent_trades = []
+            for t in trades:
+                try:
+                    ts_str = t.get('ts', '2020-01-01')
+                    # Handle both formats
+                    if 'Z' in ts_str:
+                        ts_str = ts_str.replace('Z', '+00:00')
+                    trade_time = datetime.fromisoformat(ts_str)
+                    if trade_time > week_ago:
+                        recent_trades.append(t)
+                except:
+                    continue
             report.append(f"**Trades This Week:** {len(recent_trades)}")
             report.append("")
     
@@ -139,9 +150,6 @@ def analyze_trading_bot():
 if __name__ == '__main__':
     print(analyze_trading_bot())
 PYTHON_EOF
-
-# Save report
-cat > "$REPORT_FILE"
 
 echo "Report generated: $REPORT_FILE"
 

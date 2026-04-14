@@ -1,0 +1,47 @@
+# Binance UI - Docker Compose
+# READ-ONLY access to trading bot - ZERO risk to trader
+
+version: '3.8'
+
+services:
+  binance-ui:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: binance-ui
+    ports:
+      - "5000:5000"
+    volumes:
+      # READ-ONLY mounts from trading bot
+      - /home/johan/.openclaw/workspace/trading-bots/johan-binance-trader/logs:/app/data/logs:ro
+      - /home/johan/.openclaw/workspace/trading-bots/johan-binance-trader/data:/app/data/bot:ro
+      # UI-specific storage
+      - ui-cache:/app/cache
+    environment:
+      - FLASK_ENV=production
+      - LOG_LEVEL=INFO
+      - BOT_LOG_PATH=/app/data/logs
+      - BOT_DATA_PATH=/app/data/bot
+    restart: unless-stopped
+    # Security constraints
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - ui-network
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+volumes:
+  ui-cache:
+    driver: local
+
+networks:
+  ui-network:
+    driver: bridge
