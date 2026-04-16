@@ -420,9 +420,9 @@ def handle_command(cmd):
             strength = summary.get('strength', 0)
             breakdown = summary.get('breakdown', {})
             
-            # Get top mentioned coins (handle both dict and list formats)
-            coins_data = data.get('coins', {})
-            if isinstance(coins_data, dict):
+            # Get top mentioned coins from summary.coins (new structure)
+            coins_data = summary.get('coins', {})
+            if coins_data:
                 # Sort by mentions and take top 5
                 sorted_coins = sorted(coins_data.items(), key=lambda x: x[1].get('mentions', 0), reverse=True)[:5]
                 coin_lines = []

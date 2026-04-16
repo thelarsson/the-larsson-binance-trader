@@ -482,12 +482,15 @@ class DecisionEngine:
         should_trade = False
         position_action = None
         
+        # RELAXED THRESHOLDS - More aggressive trading
+        # Previous: technical_score > 0.3 and sentiment_score > -0.2
+        # New: technical_score > 0.1 and sentiment_score > -0.1
         if signal in [Signal.STRONG_BUY, Signal.BUY]:
-            if technical_score > 0.3 and sentiment_score > -0.2:
+            if technical_score > 0.1 and sentiment_score > -0.1:
                 should_trade = True
                 position_action = "enter_long" if signal == Signal.STRONG_BUY else "consider_long"
         elif signal in [Signal.STRONG_SELL, Signal.SELL]:
-            if technical_score < -0.3 and sentiment_score < 0.2:
+            if technical_score < -0.1 and sentiment_score < 0.1:
                 should_trade = True
                 position_action = "exit_long" if signal == Signal.STRONG_SELL else "consider_exit"
         
