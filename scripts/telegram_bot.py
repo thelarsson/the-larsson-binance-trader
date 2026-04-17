@@ -587,12 +587,8 @@ def handle_command(cmd):
         return "\n".join(lines)
     
     elif cmd == '/ema':
-        """Show EMA status for all pairs"""
+        """Show EMA status for top 5 pairs"""
         try:
-            import sys
-            sys.path.insert(0, str(TRADER_DIR / 'scripts'))
-            from trader import get_prices, calculate_signal
-            
             # Get PAIRS from .env
             pairs = []
             env_file = TRADER_DIR / '.env'
@@ -606,59 +602,51 @@ def handle_command(cmd):
             if not pairs:
                 return "❌ No PAIRS configured"
             
-            lines = ["📊 *EMA Status for All Pairs*:", ""]
+            lines = ["📊 *EMA Status* (Top 5 pairs):", ""]
             
-            for pair in pairs[:10]:  # Limit to 10 to avoid message too long
+            import httpx
+            
+            for pair in pairs[:5]:  # Only top 5 to keep message short
                 try:
-                    # Get prices from Binance API
-                    import httpx
-                    r = httpx.get(f"https://api.binance.com/api/v3/klines?symbol={pair}&interval=1h&limit=50", timeout=10)
+                    r = httpx.get(f"https://api.binance.com/api/v3/klines?symbol={pair}&interval=1h&limit=50", timeout=5)
                     if r.status_code == 200:
                         klines = r.json()
                         if len(klines) >= 20:
-                            closes = [float(k[4]) for k in klines]  # Close price is index 4
+                            closes = [float(k[4]) for k in klines]
                             
-                            # Calculate EMA manually
+                            # Simple EMA calc
                             def ema_calc(prices, period):
-                                multiplier = 2 / (period + 1)
+                                mult = 2 / (period + 1)
                                 ema = prices[0]
-                                for price in prices[1:]:
-                                    ema = (price * multiplier) + (ema * (1 - multiplier))
+                                for p in prices[1:]:
+                                    ema = (p * mult) + (ema * (1 - mult))
                                 return ema
                             
                             ema_9 = ema_calc(closes[-9:], 9)
                             ema_20 = ema_calc(closes[-20:], 20)
-                            current = closes[-1]
                             
                             if ema_9 > ema_20 * 1.001:
-                                status = "🟢 ABOVE"
-                                diff = ((ema_9 - ema_20) / ema_20) * 100
+                                status = "🟢"
                             elif ema_9 < ema_20 * 0.999:
-                                status = "🔴 BELOW"
-                                diff = ((ema_20 - ema_9) / ema_20) * 100
+                                status = "🔴"
                             else:
-                                status = "⚪ NEAR"
-                                diff = abs(((ema_9 - ema_20) / ema_20)) * 100
+                                status = "⚪"
                             
-                            lines.append(f"`{pair}`: {status} ({diff:.2f}%)")
+                            lines.append(f"{status} `{pair}`: EMA9={ema_9:.2f} vs EMA20={ema_20:.2f}")
                         else:
-                            lines.append(f"`{pair}`: ⚪ No data")
+                            lines.append(f"⚪ `{pair}`: No data")
                     else:
-                        lines.append(f"`{pair}`: ⚪ No data")
-                except Exception as e:
-                    lines.append(f"`{pair}`: ⚠️ Error")
-            
-            if len(pairs) > 10:
-                lines.append(f"\n... and {len(pairs) - 10} more pairs")
+                        lines.append(f"⚪ `{pair}`: API error")
+                except:
+                    lines.append(f"⚠️ `{pair}`: Error")
             
             lines.append("")
-            lines.append("🟢 = EMA9 > EMA20 (bullish)")
-            lines.append("🔴 = EMA9 < EMA20 (bearish)")
-            lines.append("⚪ = Near crossover (watch for signal)")
+            lines.append("🟢 = Bullish | 🔴 = Bearish | ⚪ = Neutral")
+            lines.append(f"\nTotal {len(pairs)} pairs. Use /pairs for full list.")
             
             return "\n".join(lines)
         except Exception as e:
-            return f"❌ Error getting EMA status: {str(e)[:50]}"
+            return f"❌ Error: {str(e)[:30]}"
     
     elif cmd == '/help':
         return ("📋 *Commands*:\n"

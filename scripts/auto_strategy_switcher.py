@@ -166,7 +166,7 @@ class AutoStrategySwitcher:
         self.telegram_token = self._load_telegram_token()
         self.telegram_chat_id = self._load_telegram_chat_id()
         self.current_strategy = self._load_current_strategy()
-        self.MIN_IMPROVEMENT = 7.0
+        self.MIN_IMPROVEMENT = 3.0  # Lowered from 7.0 to allow more frequent switches
         self.MAX_SWITCHES_PER_3_DAYS = 1
     
     def _load_telegram_token(self) -> str:
