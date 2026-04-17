@@ -1,7 +1,0 @@
-{
-  "proposed_strategy": "RSI_STRATEGY",
-  "current_strategy": "EMA_CROSSOVER",
-  "execute_after": "2026-04-17T10:39:04.317508+00:00",
-  "status": "pending",
-  "expected_improvement": 5.112683709959652
-}

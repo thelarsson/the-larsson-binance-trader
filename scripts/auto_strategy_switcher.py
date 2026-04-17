@@ -140,7 +140,7 @@ class StrategyBacktester:
         wins = 0
         for i in range(15, len(prices)):
             price = prices[i]
-            if rsi[i] < 30 and position == 0:
+            if rsi[i] < 40 and position == 0:  # Lowered from 30
                 position = capital / price
                 capital = 0
             elif position > 0:

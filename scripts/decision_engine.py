@@ -208,7 +208,7 @@ class DecisionEngine:
     SENTIMENT_WEIGHT = 0.40
     
     # Technical thresholds
-    RSI_OVERSOLD = 30
+    RSI_OVERSOLD = 40  # Lowered from 30 to generate more buy signals
     RSI_OVERBOUGHT = 70
     EMA_BULL_THRESHOLD = 0.02  # 2% above slow EMA
     EMA_BEAR_THRESHOLD = -0.02  # 2% below slow EMA
