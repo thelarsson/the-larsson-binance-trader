@@ -586,12 +586,87 @@ def handle_command(cmd):
         lines.append("Analysis runs daily at 08:00 UTC")
         return "\n".join(lines)
     
+    elif cmd == '/ema':
+        """Show EMA status for all pairs"""
+        try:
+            import sys
+            sys.path.insert(0, str(TRADER_DIR / 'scripts'))
+            from trader import get_prices, calculate_signal
+            
+            # Get PAIRS from .env
+            pairs = []
+            env_file = TRADER_DIR / '.env'
+            if env_file.exists():
+                with open(env_file) as f:
+                    for line in f:
+                        if line.startswith('PAIRS='):
+                            pairs = line.strip().split('=', 1)[1].split(',')
+                            break
+            
+            if not pairs:
+                return "❌ No PAIRS configured"
+            
+            lines = ["📊 *EMA Status for All Pairs*:", ""]
+            
+            for pair in pairs[:10]:  # Limit to 10 to avoid message too long
+                try:
+                    # Get prices from Binance API
+                    import httpx
+                    r = httpx.get(f"https://api.binance.com/api/v3/klines?symbol={pair}&interval=1h&limit=50", timeout=10)
+                    if r.status_code == 200:
+                        klines = r.json()
+                        if len(klines) >= 20:
+                            closes = [float(k[4]) for k in klines]  # Close price is index 4
+                            
+                            # Calculate EMA manually
+                            def ema_calc(prices, period):
+                                multiplier = 2 / (period + 1)
+                                ema = prices[0]
+                                for price in prices[1:]:
+                                    ema = (price * multiplier) + (ema * (1 - multiplier))
+                                return ema
+                            
+                            ema_9 = ema_calc(closes[-9:], 9)
+                            ema_20 = ema_calc(closes[-20:], 20)
+                            current = closes[-1]
+                            
+                            if ema_9 > ema_20 * 1.001:
+                                status = "🟢 ABOVE"
+                                diff = ((ema_9 - ema_20) / ema_20) * 100
+                            elif ema_9 < ema_20 * 0.999:
+                                status = "🔴 BELOW"
+                                diff = ((ema_20 - ema_9) / ema_20) * 100
+                            else:
+                                status = "⚪ NEAR"
+                                diff = abs(((ema_9 - ema_20) / ema_20)) * 100
+                            
+                            lines.append(f"`{pair}`: {status} ({diff:.2f}%)")
+                        else:
+                            lines.append(f"`{pair}`: ⚪ No data")
+                    else:
+                        lines.append(f"`{pair}`: ⚪ No data")
+                except Exception as e:
+                    lines.append(f"`{pair}`: ⚠️ Error")
+            
+            if len(pairs) > 10:
+                lines.append(f"\n... and {len(pairs) - 10} more pairs")
+            
+            lines.append("")
+            lines.append("🟢 = EMA9 > EMA20 (bullish)")
+            lines.append("🔴 = EMA9 < EMA20 (bearish)")
+            lines.append("⚪ = Near crossover (watch for signal)")
+            
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ Error getting EMA status: {str(e)[:50]}"
+    
     elif cmd == '/help':
         return ("📋 *Commands*:\n"
                 "/status - Full bot status\n"
                 "/positions - Show positions (synced with Binance)\n"
                 "/balance - USDT balance (live from Binance)\n"
                 "/pairs - Show current PAIRS list\n"
+                "/ema - Show EMA status for all pairs\n"
                 "/sync - Sync/verify positions with Binance\n"
                 "/uptime - Bot uptime\n"
                 "/sentiment - News sentiment report\n"
