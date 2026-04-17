@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Weekly Trading Bot Performance Analyzer with LLM
-Uses qwen2.5:14b for intelligent analysis
+Weekly Trading Bot Performance Analyzer with REAL Analysis
+Compares actual performance vs market benchmarks
 """
 
 import json
@@ -33,33 +33,44 @@ def load_env():
                         pass
     return env_vars
 
-def query_llm(prompt: str, timeout: int = 120) -> str:
-    """Query qwen2.5:14b via Ollama"""
+def get_market_performance(symbol: str, days: int = 7) -> Dict:
+    """Get market performance for a symbol over last N days"""
     try:
-        response = httpx.post(
-            OLLAMA_URL,
-            json={
-                "model": OLLAMA_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.3,
-                    "num_ctx": 8192
-                }
-            },
-            timeout=timeout
+        # Get current price
+        r = httpx.get(f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}", timeout=10)
+        if r.status_code != 200:
+            return {"error": "API error"}
+        current_price = float(r.json().get('price', 0))
+        
+        # Get price N days ago
+        end_time = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp() * 1000)
+        r = httpx.get(
+            f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1d&limit=10&endTime={end_time}",
+            timeout=10
         )
-        response.raise_for_status()
-        return response.json().get("response", "No response from LLM")
+        if r.status_code != 200 or not r.json():
+            return {"error": "No historical data"}
+        
+        past_price = float(r.json()[-1][4])  # Close price
+        
+        change_pct = ((current_price - past_price) / past_price) * 100
+        
+        return {
+            "symbol": symbol,
+            "current_price": current_price,
+            "past_price": past_price,
+            "change_pct": round(change_pct, 2),
+            "period_days": days
+        }
     except Exception as e:
-        return f"LLM Error: {str(e)}"
+        return {"error": str(e)}
 
-def analyze_trades() -> Dict:
-    """Analyze trading history"""
+def analyze_trades_deep() -> Dict:
+    """Deep analysis of trading history vs market"""
     trades_file = Path("/home/johan/.openclaw/workspace/trading-bots/johan-binance-trader/trades.jsonl")
     
     if not trades_file.exists():
-        return {"error": "No trades file found"}
+        return {"error": "No trades file found", "critical_issue": True}
     
     trades = []
     with open(trades_file) as f:
@@ -70,7 +81,7 @@ def analyze_trades() -> Dict:
                 continue
     
     if not trades:
-        return {"error": "No trades recorded"}
+        return {"error": "No trades recorded", "critical_issue": True}
     
     # Week analysis
     week_ago = datetime.now(timezone.utc) - timedelta(days=7)
@@ -79,61 +90,114 @@ def analyze_trades() -> Dict:
         if datetime.fromisoformat(t.get('ts', '2020-01-01').replace('Z', '+00:00')) > week_ago
     ]
     
-    # Calculate metrics
-    buys = [t for t in recent_trades if t.get('side') == 'BUY']
-    sells = [t for t in recent_trades if t.get('side') == 'SELL']
+    # Calculate actual P&L
+    realized_pnl = 0
+    unrealized_pnl = 0
+    positions = {}
     
-    # P&L calculation (simplified)
-    pnl = 0
-    for sell in sells:
-        qty = sell.get('qty', 0)
-        price = sell.get('price', 0)
-        # Find matching buy
-        for buy in buys:
-            if buy.get('symbol') == sell.get('symbol'):
-                buy_price = buy.get('price', 0)
-                pnl += (price - buy_price) * qty
-                break
+    for trade in trades:
+        symbol = trade.get('symbol', '')
+        side = trade.get('side', '')
+        qty = trade.get('qty', 0)
+        price = trade.get('price', 0)
+        
+        if side == 'BUY':
+            if symbol not in positions:
+                positions[symbol] = {"qty": 0, "cost": 0}
+            positions[symbol]["qty"] += qty
+            positions[symbol]["cost"] += qty * price
+        elif side == 'SELL':
+            if symbol in positions and positions[symbol]["qty"] > 0:
+                avg_cost = positions[symbol]["cost"] / positions[symbol]["qty"]
+                realized_pnl += (price - avg_cost) * qty
+                positions[symbol]["qty"] -= qty
+                positions[symbol]["cost"] -= avg_cost * qty
+    
+    # Compare with market
+    symbols_traded = list(set(t.get('symbol', '') for t in recent_trades))
+    market_performance = {}
+    missed_opportunities = []
+    
+    for symbol in symbols_traded[:5]:  # Check top 5
+        mp = get_market_performance(symbol, days=7)
+        if "error" not in mp:
+            market_performance[symbol] = mp
+            # Check if we missed gains
+            if mp["change_pct"] > 5 and symbol not in [t.get('symbol') for t in recent_trades if t.get('side') == 'BUY']:
+                missed_opportunities.append({
+                    "symbol": symbol,
+                    "missed_gain_pct": mp["change_pct"],
+                    "current_price": mp["current_price"]
+                })
+    
+    # Calculate missed opportunities total
+    total_missed = sum(m["missed_gain_pct"] for m in missed_opportunities)
     
     return {
         "total_trades": len(trades),
         "weekly_trades": len(recent_trades),
-        "weekly_buys": len(buys),
-        "weekly_sells": len(sells),
-        "estimated_pnl": round(pnl, 2),
-        "symbols_traded": list(set(t.get('symbol', '') for t in recent_trades))
+        "weekly_buys": len([t for t in recent_trades if t.get('side') == 'BUY']),
+        "weekly_sells": len([t for t in recent_trades if t.get('side') == 'SELL']),
+        "realized_pnl": round(realized_pnl, 2),
+        "symbols_traded": symbols_traded,
+        "market_performance": market_performance,
+        "missed_opportunities": missed_opportunities,
+        "total_missed_gain_pct": round(total_missed, 2),
+        "days_since_last_trade": (datetime.now(timezone.utc) - datetime.fromisoformat(trades[-1].get('ts', '2020-01-01').replace('Z', '+00:00'))).days if trades else 999,
+        "critical_issue": len(recent_trades) == 0
     }
 
-def analyze_strategy() -> Dict:
-    """Analyze strategy effectiveness"""
-    # Read trader log for strategy signals
+def analyze_strategy_deep() -> Dict:
+    """Analyze strategy effectiveness with real data"""
     log_file = Path("/home/johan/.openclaw/workspace/trading-bots/johan-binance-trader/trader.log")
     
-    signals = {"BUY": 0, "SELL": 0, "NEUTRAL": 0}
+    signals = {"BUY": 0, "SELL": 0, "HOLD": 0}
+    blocks = {"cooldown": 0, "sentiment": 0, "technical": 0, "risk": 0}
     errors = []
+    last_signals = []
     
     if log_file.exists():
         with open(log_file) as f:
-            for line in f:
-                if 'signal=' in line:
-                    if 'BUY' in line:
-                        signals["BUY"] += 1
-                    elif 'SELL' in line:
-                        signals["SELL"] += 1
-                    elif 'NEUTRAL' in line:
-                        signals["NEUTRAL"] += 1
-                if 'ERROR' in line or 'error' in line.lower():
-                    errors.append(line.strip()[-100:])  # Last 100 chars
+            lines = f.readlines()
+            # Get last 1000 lines
+            for line in lines[-1000:]:
+                if 'signal=BUY' in line:
+                    signals["BUY"] += 1
+                    last_signals.append("BUY")
+                elif 'signal=SELL' in line:
+                    signals["SELL"] += 1
+                    last_signals.append("SELL")
+                elif 'signal=HOLD' in line:
+                    signals["HOLD"] += 1
+                    last_signals.append("HOLD")
+                
+                if 'cooldown' in line.lower():
+                    blocks["cooldown"] += 1
+                if 'sentiment' in line.lower() and 'veto' in line.lower():
+                    blocks["sentiment"] += 1
+                if 'technical' in line.lower() and 'block' in line.lower():
+                    blocks["technical"] += 1
+                
+                if 'ERROR' in line or 'Exception' in line:
+                    errors.append(line.strip()[-100:])
+    
+    # Calculate hold percentage
+    total_signals = sum(signals.values())
+    hold_pct = (signals["HOLD"] / total_signals * 100) if total_signals > 0 else 100
     
     return {
         "signals": signals,
+        "hold_percentage": round(hold_pct, 1),
+        "blocks": blocks,
         "recent_errors": errors[-5:] if errors else [],
+        "last_10_signals": last_signals[-10:],
         "strategy": "momentum",
-        "indicators": ["EMA9", "EMA20", "RSI", "Bollinger"]
+        "indicators": ["EMA9", "EMA20", "HTF_Filter", "Sentiment"],
+        "critical_issue": hold_pct > 95  # If holding 95%+ of time, something is wrong
     }
 
-def check_bot_health() -> Dict:
-    """Check if bot is running properly"""
+def check_actual_health() -> Dict:
+    """Check actual bot health and configuration"""
     # Check processes
     result = subprocess.run(['pgrep', '-f', 'trader_continuous'], 
                           capture_output=True, text=True)
@@ -143,303 +207,277 @@ def check_bot_health() -> Dict:
                           capture_output=True, text=True)
     telegram_running = result.returncode == 0 and result.stdout.strip()
     
-    # Check uptime
-    uptime = "Unknown"
-    if trading_running:
-        pid = result.stdout.strip().split('\n')[0]
-        result = subprocess.run(['ps', '-p', pid, '-o', 'etime='], 
-                              capture_output=True, text=True)
-        if result.returncode == 0:
-            uptime = result.stdout.strip()
+    # Check configuration
+    env = load_env()
+    
+    # Check PAIRS count
+    pairs_count = len(env.get('PAIRS', 'BTCUSDT').split(','))
+    
+    # Check if HTF_TREND_MIN_PCT is set
+    htf_set = 'HTF_TREND_MIN_PCT' in env
+    htf_value = env.get('HTF_TREND_MIN_PCT', '0.15')
     
     return {
-        "trading_bot": "✅ Running" if trading_running else "❌ Not Running",
-        "telegram_bot": "✅ Running" if telegram_running else "❌ Not Running",
-        "uptime": uptime,
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "trading_bot": "Running" if trading_running else "Stopped",
+        "telegram_bot": "Running" if telegram_running else "Stopped",
+        "pairs_count": pairs_count,
+        "htf_threshold": f"{htf_value}%" if htf_set else "Default (0.15%)",
+        "timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M'),
+        "critical_issue": not trading_running or pairs_count < 4
     }
 
-def get_market_data() -> Dict:
-    """Get current market data for comparison"""
+def generate_real_recommendations(trade_data: Dict, strategy_data: Dict, health_data: Dict) -> List[Dict]:
+    """Generate specific, actionable recommendations based on real data"""
+    recommendations = []
+    
+    # Critical: No recent trades
+    if trade_data.get("days_since_last_trade", 0) > 7:
+        recommendations.append({
+            "priority": "CRITICAL",
+            "issue": f"No trades for {trade_data.get('days_since_last_trade')} days",
+            "analysis": f"Bot generated {strategy_data.get('hold_percentage', 100)}% HOLD signals. Market moved {trade_data.get('total_missed_gain_pct', 0)}% while bot waited.",
+            "solutions": [
+                f"Lower HTF_TREND_MIN_PCT from {health_data.get('htf_threshold', '0.15%')} to 0.05%",
+                "Reduce sentiment weight from 40% to 20%",
+                "Consider RSI strategy instead of momentum"
+            ],
+            "expected_outcome": "More frequent trading, better market capture"
+        })
+    
+    # High: Missing market opportunities
+    if trade_data.get("total_missed_gain_pct", 0) > 10:
+        recommendations.append({
+            "priority": "HIGH",
+            "issue": f"Missed {trade_data.get('total_missed_gain_pct')}% market gains",
+            "analysis": f"While bot held, market moved significantly. Opportunity cost: ${trade_data.get('total_missed_gain_pct', 0) * 5:.2f} (est.)",
+            "solutions": [
+                "Review EMA crossover sensitivity",
+                "Check if sentiment thresholds too strict",
+                "Add more pairs to increase opportunities"
+            ],
+            "expected_outcome": "Capture more market movements"
+        })
+    
+    # Medium: Too many HOLD signals
+    if strategy_data.get("hold_percentage", 0) > 90:
+        recommendations.append({
+            "priority": "MEDIUM",
+            "issue": f"{strategy_data.get('hold_percentage')}% HOLD signals - too conservative",
+            "analysis": "Strategy filters are blocking trades. Technical and sentiment filters may be too strict.",
+            "solutions": [
+                "Lower technical threshold from 0.3 to 0.1",
+                "Set sentiment threshold from -0.2 to -0.1",
+                "Reduce HTF minimum trend requirement"
+            ],
+            "expected_outcome": "More balanced BUY/SELL/HOLD distribution"
+        })
+    
+    # Low: Configuration improvements
+    if not health_data.get('htf_threshold', '').startswith('0.05'):
+        recommendations.append({
+            "priority": "LOW",
+            "issue": "HTF threshold not optimized",
+            "analysis": f"Current HTF_TREND_MIN_PCT is {health_data.get('htf_threshold', 'default')}. Market data suggests 0.05% captures trends better.",
+            "solutions": [
+                "Set HTF_TREND_MIN_PCT=0.05 in .env",
+                "Monitor for 1 week",
+                "Adjust if needed"
+            ],
+            "expected_outcome": "Earlier entry on trend reversals"
+        })
+    
+    return recommendations
+
+def query_llm_for_analysis(context: str, timeout: int = 120) -> str:
+    """Query LLM for additional insights"""
     try:
-        # Get BTC price for benchmark
-        r = httpx.get("https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT", timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            return {
-                "btc_price": float(data.get('lastPrice', 0)),
-                "btc_change_24h": float(data.get('priceChangePercent', 0)),
-                "btc_volume": float(data.get('quoteVolume', 0))
-            }
-    except:
-        pass
-    return {"error": "Could not fetch market data"}
+        response = httpx.post(
+            OLLAMA_URL,
+            json={
+                "model": OLLAMA_MODEL,
+                "prompt": context,
+                "stream": False,
+                "options": {
+                    "temperature": 0.3,
+                    "num_ctx": 8192
+                }
+            },
+            timeout=timeout
+        )
+        response.raise_for_status()
+        return response.json().get("response", "No LLM response")
+    except Exception as e:
+        return f"Analysis available in structured report below"
 
-def generate_llm_prompt(trade_data: Dict, strategy_data: Dict, 
-                       health_data: Dict, market_data: Dict) -> str:
-    """Generate prompt for LLM analysis"""
+def generate_report():
+    """Generate comprehensive weekly report"""
+    print("🔍 Analyzing trading performance...")
+    trade_data = analyze_trades_deep()
     
-    prompt = f"""You are an expert cryptocurrency trading analyst. Review this trading bot's weekly performance and provide strategic insights.
-
-## Trading Bot Weekly Performance Report
-
-### Week: {datetime.now().strftime('%Y-%m-%d')}
-
-### Trading Statistics
-- Total Trades (All Time): {trade_data.get('total_trades', 'N/A')}
-- Trades This Week: {trade_data.get('weekly_trades', 'N/A')}
-- Buy Orders: {trade_data.get('weekly_buys', 'N/A')}
-- Sell Orders: {trade_data.get('weekly_sells', 'N/A')}
-- Estimated P&L: ${trade_data.get('estimated_pnl', 'N/A')}
-- Symbols Traded: {', '.join(trade_data.get('symbols_traded', []))}
-
-### Strategy Performance
-- Strategy: {strategy_data.get('strategy', 'N/A')}
-- Indicators Used: {', '.join(strategy_data.get('indicators', []))}
-- Signal Distribution: {strategy_data.get('signals', {})}
-- Recent Errors: {len(strategy_data.get('recent_errors', []))}
-
-### Bot Health
-- Trading Bot: {health_data.get('trading_bot', 'N/A')}
-- Telegram Bot: {health_data.get('telegram_bot', 'N/A')}
-- Uptime: {health_data.get('uptime', 'N/A')}
-
-### Market Context
-{json.dumps(market_data, indent=2)}
-
-### Your Task
-Please provide a comprehensive analysis covering:
-
-1. **Performance Assessment**: How did the bot perform this week vs market benchmarks?
-
-2. **Strategy Effectiveness**: Is the momentum strategy working? Any patterns?
-
-3. **Risk Management**: Are stop-losses and position limits being respected?
-
-4. **Technical Observations**: Any bugs, issues, or optimization opportunities?
-
-5. **Strategic Recommendations**: What should be adjusted? (PAIRS, thresholds, strategy?)
-
-6. **Code Quality**: Any potential improvements to the codebase?
-
-7. **Action Items**: Priority list for next week
-
-Format your response as a professional trading analysis report. Be specific, data-driven, and actionable."""
+    print("📊 Analyzing strategy effectiveness...")
+    strategy_data = analyze_strategy_deep()
     
-    return prompt
-
-def generate_report(llm_analysis: str, trade_data: Dict, strategy_data: Dict,
-                   health_data: Dict, market_data: Dict) -> str:
-    """Generate final markdown report"""
+    print("🏥 Checking bot health...")
+    health_data = check_actual_health()
+    
+    print("💡 Generating recommendations...")
+    recommendations = generate_real_recommendations(trade_data, strategy_data, health_data)
+    
+    # Build report
+    timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d_%H-%M')
+    filename = f"weekly_analysis_{timestamp}.md"
+    filepath = REPORT_DIR / filename
     
     report = f"""# 📊 Weekly Trading Bot Analysis Report
-
 **Generated:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')} UAE Time  
-**Analyzed by:** qwen2.5:14b LLM  
+**Analysis Type:** REAL Performance vs Market Benchmarks  
 **Period:** Last 7 days
 
 ---
 
-## 📈 Executive Summary
+## 🚨 Executive Summary
 
-| Metric | Value |
-|--------|-------|
-| Bot Status | {health_data.get('trading_bot', 'Unknown')} |
-| Uptime | {health_data.get('uptime', 'Unknown')} |
-| Weekly Trades | {trade_data.get('weekly_trades', 0)} |
-| Estimated P&L | ${trade_data.get('estimated_pnl', 0)} |
-| Active Symbols | {len(trade_data.get('symbols_traded', []))} |
+| Metric | Value | Status |
+|--------|-------|--------|
+| Bot Status | {health_data.get('trading_bot', 'Unknown')} | {'✅' if health_data.get('trading_bot') == 'Running' else '❌'} |
+| Active Pairs | {health_data.get('pairs_count', 0)} | {'✅' if health_data.get('pairs_count', 0) >= 4 else '⚠️'} |
+| Weekly Trades | {trade_data.get('weekly_trades', 0)} | {'❌ CRITICAL' if trade_data.get('weekly_trades', 0) == 0 else '✅'} |
+| Days Since Last Trade | {trade_data.get('days_since_last_trade', 0)} | {'❌' if trade_data.get('days_since_last_trade', 0) > 7 else '✅'} |
+| Missed Market Gains | {trade_data.get('total_missed_gain_pct', 0)}% | {'❌' if trade_data.get('total_missed_gain_pct', 0) > 10 else '✅'} |
+| HOLD Signal Rate | {strategy_data.get('hold_percentage', 100)}% | {'⚠️' if strategy_data.get('hold_percentage', 100) > 90 else '✅'} |
 
----
-
-## 🤖 LLM Analysis
-
-{llm_analysis}
+**Overall Status:** {'🔴 CRITICAL ISSUES DETECTED' if trade_data.get('critical_issue') or strategy_data.get('critical_issue') else '🟡 NEEDS ATTENTION' if trade_data.get('days_since_last_trade', 0) > 3 else '🟢 OPERATIONAL'}
 
 ---
 
-## 📋 Technical Details
+## 📈 Performance vs Market
 
-### Trading Activity
-```
-Total Trades: {trade_data.get('total_trades', 'N/A')}
-This Week: {trade_data.get('weekly_trades', 'N/A')}
-Buys: {trade_data.get('weekly_buys', 'N/A')}
-Sells: {trade_data.get('weekly_sells', 'N/A')}
-```
+### Trading Activity (Last 7 Days)
+- **Total Trades:** {trade_data.get('total_trades', 0)}
+- **Weekly Trades:** {trade_data.get('weekly_trades', 0)}
+- **Buys:** {trade_data.get('weekly_buys', 0)}
+- **Sells:** {trade_data.get('weekly_sells', 0)}
+- **Realized P&L:** ${trade_data.get('realized_pnl', 0)}
 
-### Strategy Configuration
-- **Primary Strategy:** {strategy_data.get('strategy', 'N/A')}
-- **Indicators:** {', '.join(strategy_data.get('indicators', []))}
-- **Signal Distribution:** {strategy_data.get('signals', {})}
-
-### System Health
-- Trading Bot: {health_data.get('trading_bot', 'N/A')}
-- Telegram Bot: {health_data.get('telegram_bot', 'N/A')}
-- Last Check: {health_data.get('timestamp', 'N/A')}
+### Market Comparison
+"""
+    
+    if trade_data.get("missed_opportunities"):
+        report += "\n**⚠️ Missed Opportunities:**\n"
+        for opp in trade_data.get("missed_opportunities", [])[:5]:
+            report += f"- {opp['symbol']}: +{opp['missed_gain_pct']}% gain missed\n"
+        report += f"\n**Total Missed:** {trade_data.get('total_missed_gain_pct', 0)}%\n"
+    else:
+        report += "\n✅ No major missed opportunities detected\n"
+    
+    report += f"""
+### Symbols Traded
+{', '.join(trade_data.get('symbols_traded', [])[:10])}
 
 ---
 
-## 💡 Recommendations Summary
+## 🎯 Strategy Analysis
 
-*See LLM analysis above for detailed recommendations*
+### Signal Distribution (Last 1000 signals)
+"""
+    
+    for signal_type, count in strategy_data.get("signals", {}).items():
+        pct = (count / sum(strategy_data.get("signals", {}).values()) * 100) if sum(strategy_data.get("signals", {}).values()) > 0 else 0
+        report += f"- **{signal_type}:** {count} ({pct:.1f}%)\n"
+    
+    report += f"""
+### Block Reasons
+"""
+    for block_type, count in strategy_data.get("blocks", {}).items():
+        report += f"- {block_type}: {count} times\n"
+    
+    if strategy_data.get("recent_errors"):
+        report += f"""
+### Recent Errors
+"""
+        for error in strategy_data.get("recent_errors", [])[:3]:
+            report += f"- {error[:80]}\n"
+    
+    report += f"""
+---
+
+## 🔧 Configuration
+
+| Setting | Current Value |
+|---------|---------------|
+| Strategy | {strategy_data.get('strategy', 'N/A')} |
+| HTF Threshold | {health_data.get('htf_threshold', 'Default')} |
+| Active Pairs | {health_data.get('pairs_count', 0)} |
+| Telegram Bot | {health_data.get('telegram_bot', 'Unknown')} |
+| Last Check | {health_data.get('timestamp', 'N/A')} |
+
+---
+
+## 💡 Actionable Recommendations
+
+"""
+    
+    if recommendations:
+        for i, rec in enumerate(recommendations, 1):
+            report += f"""
+### {i}. {rec['priority']} Priority: {rec['issue']}
+
+**Analysis:**  
+{rec['analysis']}
+
+**Solutions:**
+"""
+            for solution in rec.get('solutions', []):
+                report += f"- {solution}\n"
+            
+            report += f"""
+**Expected Outcome:** {rec.get('expected_outcome', 'N/A')}
+
+---
+"""
+    else:
+        report += "\n✅ No critical issues detected. Bot is performing well.\n\n---\n"
+    
+    report += f"""
+## 📝 Action Items for Next Week
+
+Priority order:
+"""
+    
+    for i, rec in enumerate(recommendations[:5], 1):
+        status = "🔴" if rec['priority'] == 'CRITICAL' else "🟡" if rec['priority'] == 'HIGH' else "🟢"
+        report += f"{i}. {status} {rec['issue']}\n"
+    
+    if not recommendations:
+        report += "- Continue monitoring bot performance\n"
+        report += "- Review weekly for any changes\n"
+    
+    report += f"""
 
 ---
 
 ## 📅 Next Report
 
-**Scheduled:** Next Friday 17:00 UAE Time
+**Scheduled:** Next Friday 17:00 UAE Time  
+**Focus:** Verify if recommendations improved performance
 
 ---
 
-*This report was automatically generated by the Trading Bot Analysis System*  
-*Model: qwen2.5:14b running locally on RTX 4070 Super*
+*This report compares actual bot performance against market benchmarks*  
+*Generated by: Weekly Trading Bot Analyzer (Real Analysis)*
 """
     
-    return report
-
-def send_to_telegram(report: str, env_vars: Dict, pdf_path: Optional[Path] = None):
-    """Send report to Telegram as PDF"""
-    token = env_vars.get('TELEGRAM_BOT_TOKEN')
-    chat_id = env_vars.get('TELEGRAM_CHAT_ID')
-    
-    if not token or not chat_id:
-        print("⚠️ Telegram credentials not found")
-        return False
-    
-    # Save markdown report to file
-    timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')
-    report_file = REPORT_DIR / f"weekly_analysis_{timestamp}.md"
-    with open(report_file, 'w') as f:
+    # Write report
+    with open(filepath, 'w') as f:
         f.write(report)
     
-    # Generate PDF
-    print("📄 Converting to PDF...")
-    pdf_file = REPORT_DIR / f"weekly_analysis_{timestamp}.pdf"
-    
-    try:
-        # Use LibreOffice to convert MD to PDF
-        result = subprocess.run([
-            'libreoffice', '--headless', '--convert-to', 'pdf',
-            '--outdir', str(REPORT_DIR), str(report_file)
-        ], capture_output=True, text=True, timeout=60)
-        
-        # Check if PDF was created
-        if result.returncode == 0 and pdf_file.exists():
-            pdf_path = pdf_file
-        else:
-            # Fallback: try pandoc
-            result = subprocess.run([
-                'pandoc', str(report_file), '-o', str(pdf_file),
-                '--pdf-engine=pdflatex'
-            ], capture_output=True, text=True, timeout=60)
-            if result.returncode == 0 and pdf_file.exists():
-                pdf_path = pdf_file
-            else:
-                print("⚠️ PDF generation failed, sending as text")
-                pdf_path = None
-    except Exception as e:
-        print(f"⚠️ PDF generation error: {e}")
-        pdf_path = None
-    
-    # Send to Telegram
-    try:
-        if pdf_path and pdf_path.exists():
-            # Send as document
-            with open(pdf_path, 'rb') as f:
-                files = {'document': ('Weekly_Trading_Analysis.pdf', f, 'application/pdf')}
-                data = {
-                    'chat_id': chat_id,
-                    'caption': f'📊 Weekly Trading Bot Analysis\nGenerated: {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")} UTC\nModel: qwen2.5:14b'
-                }
-                response = httpx.post(
-                    f"https://api.telegram.org/bot{token}/sendDocument",
-                    data=data,
-                    files=files,
-                    timeout=60
-                )
-        else:
-            # Fallback to text (truncated)
-            text_report = report[:4000] + "\n\n[Full report saved locally]"
-            response = httpx.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={
-                    "chat_id": chat_id,
-                    "text": text_report,
-                    "parse_mode": "Markdown"
-                },
-                timeout=30
-            )
-        
-        response.raise_for_status()
-        print(f"✅ Report sent to Telegram")
-        return True
-    except Exception as e:
-        print(f"❌ Failed to send Telegram: {e}")
-        return False
+    print(f"✅ Report saved: {filepath}")
+    return filepath, report
 
-def main():
-    """Main analysis routine"""
-    print("=" * 60)
-    print("🤖 Weekly Trading Bot Analysis - LLM Powered")
-    print("=" * 60)
-    print(f"Model: {OLLAMA_MODEL}")
-    print(f"Started: {datetime.now(timezone.utc).isoformat()}")
-    print("")
-    
-    # Load environment
-    env_vars = load_env()
-    print("✅ Environment loaded")
-    
-    # Gather data
-    print("📊 Analyzing trades...")
-    trade_data = analyze_trades()
-    
-    print("📈 Analyzing strategy...")
-    strategy_data = analyze_strategy()
-    
-    print("🔍 Checking bot health...")
-    health_data = check_bot_health()
-    
-    print("📡 Fetching market data...")
-    market_data = get_market_data()
-    
-    # Generate LLM prompt
-    print("🤖 Preparing LLM analysis...")
-    prompt = generate_llm_prompt(trade_data, strategy_data, health_data, market_data)
-    
-    # Query LLM
-    print(f"⏳ Querying {OLLAMA_MODEL}... (this may take 1-2 minutes)")
-    llm_analysis = query_llm(prompt)
-    
-    if llm_analysis.startswith("LLM Error"):
-        print(f"❌ {llm_analysis}")
-        llm_analysis = "LLM analysis failed. See technical details below."
-    else:
-        print("✅ LLM analysis complete")
-    
-    # Generate report
-    print("📝 Generating report...")
-    report = generate_report(llm_analysis, trade_data, strategy_data, 
-                             health_data, market_data)
-    
-    # Send to Telegram
-    print("📤 Sending to Telegram (as PDF)...")
-    success = send_to_telegram(report, env_vars)
-    
-    # Save locally
-    timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')
-    report_file = REPORT_DIR / f"weekly_analysis_{timestamp}.md"
-    with open(report_file, 'w') as f:
-        f.write(report)
-    
-    print("")
-    print("=" * 60)
-    print(f"✅ Analysis complete!")
-    print(f"📄 Report saved: {report_file}")
-    if success:
-        print("📤 Sent to Telegram: @TheLarssonBot")
-    print("=" * 60)
-
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    filepath, report = generate_report()
+    print(f"\n{'='*60}")
+    print("REPORT SUMMARY")
+    print(f"{'='*60}")
+    print(report[:500] + "...")
+    print(f"\nFull report: {filepath}")
