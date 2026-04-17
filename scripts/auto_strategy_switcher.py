@@ -7,6 +7,7 @@ Production Version with Execute Function - IMPLEMENTED
 import json
 import httpx
 import logging
+import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -366,8 +367,15 @@ class AutoStrategySwitcher:
             )
             return
         
-        # STEP 3: Run new analysis
-        pairs = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']
+        # STEP 3: Run new analysis - Use PAIRS from .env
+        # Load PAIRS from environment or .env file
+        env_pairs = os.getenv('PAIRS', 'BTCUSDT,ETHUSDT')
+        pairs = [p.strip() for p in env_pairs.split(',') if p.strip()][:5]  # Limit to 5 pairs for performance
+        
+        if not pairs:
+            pairs = ['BTCUSDT', 'ETHUSDT']  # Fallback
+        
+        logger.info(f"Analyzing {len(pairs)} pairs: {', '.join(pairs[:3])}{'...' if len(pairs) > 3 else ''}")
         results = []
         
         for pair in pairs:
