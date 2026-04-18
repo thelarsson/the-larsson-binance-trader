@@ -88,7 +88,8 @@ def get_position_state(symbol):
     qty = 0.0
     cost = 0.0
     for row in load_trade_history():
-        if row.get("symbol") != symbol or row.get("result") != "FILLED":
+        result = row.get("result", "")
+        if row.get("symbol") != symbol or result not in ("FILLED", "SYNCED"):
             continue
         side = row.get("side")
         trade_qty = float(row.get("qty", 0) or 0)
@@ -104,6 +105,10 @@ def get_position_state(symbol):
             if qty <= 1e-12:
                 qty = 0.0
                 cost = 0.0
+        # Handle SYNCED entries (position already closed externally)
+        if result == "SYNCED":
+            qty = 0.0
+            cost = 0.0
     avg_entry = (cost / qty) if qty > 0 else None
     return {"qty": qty, "cost": cost, "avg_entry": avg_entry}
 
@@ -438,7 +443,8 @@ def get_position_state(symbol, verify_binance=False, current_price=None):
     qty = 0.0
     cost = 0.0
     for row in load_trade_history():
-        if row.get("symbol") != symbol or row.get("result") != "FILLED":
+        result = row.get("result", "")
+        if row.get("symbol") != symbol or result not in ("FILLED", "SYNCED"):
             continue
         side = row.get("side")
         trade_qty = float(row.get("qty", 0) or 0)
@@ -454,6 +460,10 @@ def get_position_state(symbol, verify_binance=False, current_price=None):
             if qty <= 1e-12:
                 qty = 0.0
                 cost = 0.0
+        # Handle SYNCED entries (position already closed externally)
+        if result == "SYNCED":
+            qty = 0.0
+            cost = 0.0
     avg_entry = (cost / qty) if qty > 0 else None
 
     # Filter out dust positions under $1 USD
@@ -497,6 +507,30 @@ def place_order(symbol, side, quantity, extra=None, market_price=None):
     params = {"symbol": symbol, "side": side, "type": "MARKET", "quantity": qty_str}
     result = api_post("/api/v3/order", params)
     log.info(f"ORDER {side}: {symbol} qty={qty_str} -> {result.get('status', 'UNKNOWN')} {result.get('msg', '')}")
+    
+    # Handle SELL failure - sync with Binance to avoid repeated attempts
+    if side == "SELL" and result.get('status') != 'FILLED':
+        error_msg = result.get('msg', '').lower()
+        if 'insufficient balance' in error_msg or 'insufficient asset' in error_msg:
+            # Verify actual Binance balance
+            try:
+                base_asset = symbol.replace("USDT", "")
+                actual_balance = get_balance(base_asset)
+                if actual_balance * (market_price or 0) < MIN_POSITION_VALUE_USD:
+                    log.info(f"SELL failed but position already closed on Binance. Syncing local state.")
+                    # Log a 'SYNCED' entry to clear local position
+                    payload = {"ts": datetime.now(timezone.utc).isoformat(), "symbol": symbol,
+                        "side": "SELL", "qty": float(qty_str), "result": "SYNCED",
+                        "price": float(market_price or 0), "exit_reason": "ALREADY_CLOSED"
+                    }
+                    if extra:
+                        payload.update(extra)
+                    with open(TRADES_LOG, "a") as f:
+                        f.write(json.dumps(payload) + "\n")
+                    return result
+            except Exception as e:
+                log.warning(f"Could not verify position after failed SELL: {e}")
+    
     payload = {"ts": datetime.now(timezone.utc).isoformat(), "symbol": symbol,
         "side": side, "qty": float(qty_str), "result": result.get("status", "UNKNOWN"),
         "price": float(result.get("fills", [{}])[0].get("price", 0)) if result.get("fills") else float(market_price or 0)
