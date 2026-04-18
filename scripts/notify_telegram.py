@@ -1,12 +1,37 @@
 #!/usr/bin/env python3
 """Notify to Telegram — trades, discovery, and research updates."""
-import os, json, time
+import os, json, time, fcntl
 from pathlib import Path
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 import httpx
 
 load_dotenv()
+
+# Prevent multiple simultaneous runs
+LOCK_FILE = Path('/home/johan/.openclaw/workspace/trading-bots/johan-binance-trader/.notify-telegram.lock')
+
+def acquire_lock():
+    """Acquire file lock to prevent duplicate runs."""
+    try:
+        lock_fd = open(LOCK_FILE, 'w')
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_fd.write(str(os.getpid()))
+        lock_fd.flush()
+        return lock_fd
+    except (IOError, OSError):
+        print("[NOTIFY] Another instance is already running. Exiting.")
+        exit(0)
+
+def release_lock(lock_fd):
+    """Release file lock."""
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+        if LOCK_FILE.exists():
+            LOCK_FILE.unlink()
+    except:
+        pass
 
 TRADES_LOG = Path('/home/johan/.openclaw/workspace/trading-bots/johan-binance-trader/trades.jsonl')
 DISCOVERY_LOG = Path('/home/johan/.openclaw/workspace/crypto-news-scraper/discovery_report.json')
@@ -264,16 +289,20 @@ def notify_sentiment():
 
 
 def main():
-    load_state()
-    
-    # Check for new trades
-    notify_trades()
-    
-    # Check for new discovery
-    notify_discovery()
-    
-    # Check for sentiment changes
-    notify_sentiment()
+    lock_fd = acquire_lock()
+    try:
+        load_state()
+        
+        # Check for new trades
+        notify_trades()
+        
+        # Check for new discovery
+        notify_discovery()
+        
+        # Check for sentiment changes
+        notify_sentiment()
+    finally:
+        release_lock(lock_fd)
 
 
 if __name__ == '__main__':
