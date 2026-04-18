@@ -16,9 +16,14 @@ USAGE:
 
 import sys
 import json
+import os
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict
+
+# Load thresholds from environment (with defaults)
+TECH_THRESHOLD = float(os.getenv('DECISION_TECH_THRESHOLD', '0.1'))
+SENT_THRESHOLD = float(os.getenv('DECISION_SENT_THRESHOLD', '-0.1'))
 
 # Import decision engine
 try:
@@ -114,27 +119,27 @@ def should_enter_trade(symbol: str, direction: str = "long") -> tuple:
         # Strong buy signal
         if signal.get("signal") == "STRONG_BUY":
             return True, f"Strong buy signal (strength: {strength:.2f})"
-        # Buy signal with confirmation
+        # Buy signal with confirmation (uses env thresholds)
         elif signal.get("signal") == "BUY":
-            if tech_score > 0.2 and sent_score > -0.1:
-                return True, f"Buy signal with confirmation (tech: {tech_score:.2f}, sent: {sent_score:.2f})"
-        # Neutral but technically bullish
+            if tech_score >= TECH_THRESHOLD and sent_score >= SENT_THRESHOLD:
+                return True, f"Buy signal with confirmation (tech: {tech_score:.2f} >= {TECH_THRESHOLD}, sent: {sent_score:.2f} >= {SENT_THRESHOLD})"
+        # RELAXED: Also allow NEUTRAL with positive technical score
         elif signal.get("signal") == "NEUTRAL":
-            if tech_score > 0.3 and sent_score > 0:
-                return True, f"Technically bullish with positive sentiment"
+            if tech_score >= TECH_THRESHOLD:
+                return True, f"Neutral but technically acceptable (tech: {tech_score:.2f} >= {TECH_THRESHOLD})"
         
-        return False, f"Signal: {signal.get('signal')}, not favorable for long entry"
+        return False, f"Signal: {signal.get('signal')}, not favorable for long entry (tech: {tech_score:.2f}, sent: {sent_score:.2f})"
     
     elif direction.lower() == "short":
         # Strong sell signal
         if signal.get("signal") == "STRONG_SELL":
             return True, f"Strong sell signal (strength: {strength:.2f})"
-        # Sell signal with confirmation
+        # Sell signal with confirmation (uses env thresholds, negated)
         elif signal.get("signal") == "SELL":
-            if tech_score < -0.2 and sent_score < 0.1:
-                return True, f"Sell signal with confirmation (tech: {tech_score:.2f}, sent: {sent_score:.2f})"
+            if tech_score < -TECH_THRESHOLD and sent_score < -SENT_THRESHOLD:
+                return True, f"Sell signal with confirmation (tech: {tech_score:.2f} < {-TECH_THRESHOLD}, sent: {sent_score:.2f} < {-SENT_THRESHOLD})"
         
-        return False, f"Signal: {signal.get('signal')}, not favorable for short entry"
+        return False, f"Signal: {signal.get('signal')}, not favorable for short entry (tech: {tech_score:.2f}, sent: {sent_score:.2f})"
     
     return False, f"Unknown direction: {direction}"
 

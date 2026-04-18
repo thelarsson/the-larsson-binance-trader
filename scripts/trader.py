@@ -538,6 +538,34 @@ def mean_reversion_signal(klines):
     if r > 70 or current >= upper * 0.98: return "SELL"
     return "HOLD"
 
+def ema_signal(klines, htf_klines=None):
+    """EMA Crossover Strategy with optional HTF filter."""
+    prices = [k["c"] for k in klines]
+    fast_ema = ema(prices, 9)  # Fast EMA 9-period
+    slow_ema = ema(prices, 20)  # Slow EMA 20-period
+    current = prices[-1]
+    
+    # HTF filter check
+    htf_ok = bullish_htf_filter(htf_klines) if htf_klines else True
+    
+    # Buy signal: fast EMA crosses above slow EMA, price above slow EMA, HTF confirms
+    if htf_ok and current > slow_ema and fast_ema > slow_ema:
+        # Check if fast just crossed above slow (recent candles)
+        prev_fast = ema(prices[:-1], 9)
+        prev_slow = ema(prices[:-1], 20)
+        if fast_ema > slow_ema and prev_fast <= prev_slow:
+            return "BUY"
+        # Also buy if sustained uptrend
+        if fast_ema > slow_ema * 1.001:  # Fast slightly above slow
+            return "BUY"
+    
+    # Sell signal: fast EMA below slow EMA or price drops below
+    below_count = sum(1 for p in prices[-3:] if p < slow_ema)
+    if fast_ema < slow_ema or below_count >= 2:
+        return "SELL"
+    
+    return "HOLD"
+
 def run():
     log.info(f"Strategy: {STRATEGY} | Pairs: {PAIRS} | Interval: {KLINE_INTERVAL} | HTF: {HTF_INTERVAL} | AntiChase: {ANTI_CHASE_PCT}% | HTFMinGap: {HTF_TREND_MIN_PCT}%")
     log.info(f"LLM: {USE_LLM} | Decision Engine: {USE_DECISION_ENGINE and DECISION_ENGINE_AVAILABLE} | Sentiment Weight: {DECISION_SENTIMENT_WEIGHT}")
@@ -588,6 +616,8 @@ def run():
                 signal = momentum_signal(klines, htf_klines)
             elif STRATEGY == "mean_reversion":
                 signal = mean_reversion_signal(klines)
+            elif STRATEGY == "ema":
+                signal = ema_signal(klines, htf_klines)
             elif STRATEGY == "dca":
                 signal = "BUY"
             else:

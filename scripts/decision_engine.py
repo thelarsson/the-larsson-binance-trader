@@ -484,15 +484,20 @@ class DecisionEngine:
         
         # RELAXED THRESHOLDS - More aggressive trading
         # Previous: technical_score > 0.3 and sentiment_score > -0.2
-        # New: technical_score > 0.1 and sentiment_score > -0.1
+        # New: technical_score > 0.0 and sentiment_score > -0.1 (or even 0.0)
         if signal in [Signal.STRONG_BUY, Signal.BUY]:
-            if technical_score > 0.1 and sentiment_score > -0.1:
+            if technical_score > 0.0 and sentiment_score > -0.1:
                 should_trade = True
                 position_action = "enter_long" if signal == Signal.STRONG_BUY else "consider_long"
         elif signal in [Signal.STRONG_SELL, Signal.SELL]:
-            if technical_score < -0.1 and sentiment_score < 0.1:
+            if technical_score < -0.0 and sentiment_score < 0.1:
                 should_trade = True
                 position_action = "exit_long" if signal == Signal.STRONG_SELL else "consider_exit"
+        # ALSO allow NEUTRAL signals if technical score is positive (EMA crossover)
+        elif signal == Signal.NEUTRAL:
+            if technical_score > 0.0:
+                should_trade = True
+                position_action = "consider_long"
         
         # Build reason
         reasons = []
