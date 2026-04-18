@@ -105,6 +105,10 @@ def notify_trades():
     if not new_lines:
         return
     
+    # Track which trade IDs we've already notified
+    notified_ids = STATE.get("notified_trade_ids", [])
+    newly_notified = []
+    
     for line in new_lines:
         line = line.strip()
         if not line:
@@ -115,15 +119,27 @@ def notify_trades():
         except json.JSONDecodeError:
             continue
         
+        # Only notify successful FILLED trades
         if row.get('result') != 'FILLED':
+            continue
+        
+        # Create unique ID for this trade (symbol + side + timestamp)
+        trade_id = f"{row.get('symbol')}_{row.get('side')}_{row.get('ts')}"
+        
+        # Skip if already notified
+        if trade_id in notified_ids:
             continue
         
         msg = format_trade_message(row)
         if send_telegram(msg):
+            newly_notified.append(trade_id)
             time.sleep(0.5)  # Rate limit
     
+    # Update state
     STATE["last_trade_line"] = len(lines)
-    save_state()
+    if newly_notified:
+        STATE["notified_trade_ids"] = (notified_ids + newly_notified)[-100:]  # Keep last 100
+        save_state()
 
 
 def notify_discovery():
