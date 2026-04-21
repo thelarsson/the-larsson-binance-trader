@@ -359,11 +359,20 @@ class AutoStrategySwitcher:
         
         # STEP 2: Check if we can switch
         if not self._can_switch():
+            from datetime import datetime
+            now = datetime.now(timezone.utc)
+            # Next analysis at 08:00 or 20:00 UTC
+            if now.hour < 8:
+                next_analysis = "08:00 UTC today"
+            elif now.hour < 20:
+                next_analysis = "20:00 UTC today"
+            else:
+                next_analysis = "08:00 UTC tomorrow"
             self._send_telegram(
                 "📊 *Strategy Analysis*\n\n"
                 f"Current: *{self.current_strategy}*\n"
                 "Status: Max switches reached (1 per 3 days)\n"
-                "Next analysis: Tomorrow"
+                f"Next analysis: {next_analysis}"
             )
             return
         
