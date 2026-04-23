@@ -1,5 +1,5 @@
 {
-  "current_strategy": "EMA_STRATEGY",
-  "last_updated": "2026-04-19T04:04:00+00:00",
+  "current_strategy": "RSI_STRATEGY",
+  "last_updated": "2026-04-23T18:55:00+00:00",
   "switches_last_3_days": 1
 }
