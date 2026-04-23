@@ -205,6 +205,7 @@ class AutoStrategySwitcher:
         logger.info(f"State saved: {strategy}")
     
     def _get_switches_last_3_days(self) -> int:
+        """Get number of switches in last 3 days, auto-reset if > 3 days since last switch."""
         if not STATE_FILE.exists():
             return 0
         with open(STATE_FILE) as f:
@@ -213,8 +214,15 @@ class AutoStrategySwitcher:
             if last_update:
                 last_date = datetime.fromisoformat(last_update)
                 days_ago = (datetime.now(timezone.utc) - last_date).days
-                if days_ago < 7:
+                # Auto-reset counter if more than 3 days since last switch
+                if days_ago < 3:
                     return data.get('switches_last_3_days', 0)
+                else:
+                    # Reset counter in state file
+                    data['switches_last_3_days'] = 0
+                    with open(STATE_FILE, 'w') as f:
+                        json.dump(data, f, indent=2)
+                    return 0
         return 0
     
     def _can_switch(self) -> bool:
