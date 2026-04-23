@@ -414,7 +414,14 @@ class AutoStrategySwitcher:
             best_strategy = 'RSI_STRATEGY'
             best_return = rsi_total
         
-        improvement = best_return - ema_total if self.current_strategy == 'EMA_CROSSOVER' else 0
+        # Calculate improvement correctly based on current strategy
+        # Handle both 'EMA_CROSSOVER' and 'EMA_STRATEGY' naming
+        if self.current_strategy in ('EMA_CROSSOVER', 'EMA_STRATEGY'):
+            improvement = best_return - ema_total
+        elif self.current_strategy == 'RSI_STRATEGY':
+            improvement = best_return - rsi_total
+        else:
+            improvement = 0
         
         # STEP 4: Decide and act
         if improvement >= self.MIN_IMPROVEMENT and best_strategy != self.current_strategy:
