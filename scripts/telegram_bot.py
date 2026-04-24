@@ -586,6 +586,79 @@ def handle_command(cmd):
         lines.append("Analysis runs daily at 08:00 UTC")
         return "\n".join(lines)
     
+    elif cmd == '/signals':
+        """Show current trading signals for all pairs"""
+        try:
+            import sys
+            import os
+            sys.path.insert(0, str(TRADER_DIR / 'scripts'))
+            os.chdir(str(TRADER_DIR))
+            
+            from trader import get_klines, rsi_signal, ema_signal
+            from dotenv import load_dotenv
+            load_dotenv()
+            
+            # Get pairs from .env
+            pairs = os.getenv('PAIRS', 'BTCUSDT,ETHUSDT').split(',')
+            strategy = os.getenv('STRATEGY', 'ema')
+            
+            lines = [f"📊 *Trading Signals* ({strategy.upper()})", ""]
+            
+            # Track signals
+            buy_signals = []
+            sell_signals = []
+            hold_signals = []
+            
+            for pair in pairs[:10]:  # Limit to first 10
+                try:
+                    klines = get_klines(pair, '1h', 50)
+                    if not klines:
+                        continue
+                    
+                    # Get signal based on strategy
+                    if strategy == 'rsi':
+                        signal = rsi_signal(klines)
+                    elif strategy == 'ema':
+                        signal = ema_signal(klines)
+                    else:
+                        signal = 'HOLD'
+                    
+                    current_price = klines[-1]['c']
+                    
+                    if signal == 'BUY':
+                        buy_signals.append(f"• 🟢 `{pair}`: ${current_price:,.4f}")
+                    elif signal == 'SELL':
+                        sell_signals.append(f"• 🔴 `{pair}`: ${current_price:,.4f}")
+                    else:
+                        hold_signals.append(f"• ⚪ `{pair}`: ${current_price:,.4f}")
+                except Exception:
+                    continue
+            
+            # Format output
+            if buy_signals:
+                lines.append(f"🟢 *BUY Signals ({len(buy_signals)})*:")
+                lines.extend(buy_signals)
+                lines.append("")
+            
+            if sell_signals:
+                lines.append(f"🔴 *SELL Signals ({len(sell_signals)})*:")
+                lines.extend(sell_signals)
+                lines.append("")
+            
+            if hold_signals:
+                lines.append(f"⚪ *HOLD ({len(hold_signals)})*:")
+                lines.extend(hold_signals[:5])  # Limit shown
+                if len(hold_signals) > 5:
+                    lines.append(f"... and {len(hold_signals) - 5} more")
+                lines.append("")
+            
+            lines.append(f"Strategy: *{strategy.upper()}*")
+            lines.append(f"Checked: {len(buy_signals) + len(sell_signals) + len(hold_signals)} pairs")
+            
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ Error: {str(e)[:50]}"
+    
     elif cmd == '/ema':
         """Show EMA status for top 5 pairs"""
         try:
@@ -653,6 +726,7 @@ def handle_command(cmd):
                 "/status - Full bot status\n"
                 "/positions - Show positions (synced with Binance)\n"
                 "/balance - USDT balance (live from Binance)\n"
+                "/signals - Current trading signals (BUY/SELL/HOLD)\n"
                 "/pairs - Show current PAIRS list\n"
                 "/ema - Show EMA status for all pairs\n"
                 "/sync - Sync/verify positions with Binance\n"
