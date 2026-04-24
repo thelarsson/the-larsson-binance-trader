@@ -609,7 +609,7 @@ def handle_command(cmd):
             sell_signals = []
             hold_signals = []
             
-            for pair in pairs[:10]:  # Limit to first 10
+            for pair in pairs[:20]:  # Limit to first 20
                 try:
                     klines = get_klines(pair, '1h', 50)
                     if not klines:
@@ -649,7 +649,7 @@ def handle_command(cmd):
                 lines.append(f"⚪ *HOLD ({len(hold_signals)})*:")
                 lines.extend(hold_signals[:5])  # Limit shown
                 if len(hold_signals) > 5:
-                    lines.append(f"... and {len(hold_signals) - 5} more")
+                    lines.append(f"... and {len(hold_signals) - 10} more")
                 lines.append("")
             
             lines.append(f"Strategy: *{strategy.upper()}*")
