@@ -647,9 +647,7 @@ def handle_command(cmd):
             
             if hold_signals:
                 lines.append(f"⚪ *HOLD ({len(hold_signals)})*:")
-                lines.extend(hold_signals[:5])  # Limit shown
-                if len(hold_signals) > 5:
-                    lines.append(f"... and {len(hold_signals) - 10} more")
+                lines.extend(hold_signals)  # Limit shown
                 lines.append("")
             
             lines.append(f"Strategy: *{strategy.upper()}*")
