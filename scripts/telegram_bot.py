@@ -586,6 +586,105 @@ def handle_command(cmd):
         lines.append("Analysis runs daily at 08:00 UTC")
         return "\n".join(lines)
     
+    elif cmd == '/performance':
+        """Show trading performance metrics"""
+        try:
+            import json
+            from datetime import datetime, timedelta
+            from pathlib import Path
+            
+            lines = ["📈 *Performance Dashboard*", ""]
+            
+            # Load trades
+            trades_file = TRADER_DIR / 'trades.jsonl'
+            if not trades_file.exists():
+                return "ℹ️ No trades recorded yet."
+            
+            trades = []
+            with open(trades_file) as f:
+                for line in f:
+                    try:
+                        trades.append(json.loads(line))
+                    except:
+                        continue
+            
+            # Calculate metrics
+            total_trades = len([t for t in trades if t.get('result') == 'FILLED'])
+            buy_trades = [t for t in trades if t.get('side') == 'BUY' and t.get('result') == 'FILLED']
+            sell_trades = [t for t in trades if t.get('side') == 'SELL' and t.get('result') == 'FILLED']
+            
+            # Calculate P&L
+            wins = len([t for t in sell_trades if t.get('exit_reason') == 'TAKE_PROFIT'])
+            losses = len([t for t in sell_trades if t.get('exit_reason') == 'STOP_LOSS'])
+            total_sells = wins + losses
+            
+            win_rate = (wins / total_sells * 100) if total_sells > 0 else 0
+            
+            # Calculate realized P&L
+            realized_pnl = 0.0
+            positions = {}
+            for t in trades:
+                if t.get('result') != 'FILLED':
+                    continue
+                sym = t.get('symbol', '')
+                qty = float(t.get('qty', 0) or 0)
+                price = float(t.get('price', 0) or 0)
+                
+                if t.get('side') == 'BUY':
+                    positions[sym] = positions.get(sym, {'qty': 0, 'cost': 0})
+                    positions[sym]['qty'] += qty
+                    positions[sym]['cost'] += qty * price
+                elif t.get('side') == 'SELL' and sym in positions:
+                    if positions[sym]['qty'] > 0:
+                        avg_entry = positions[sym]['cost'] / positions[sym]['qty']
+                        sell_qty = min(qty, positions[sym]['qty'])
+                        realized_pnl += (price - avg_entry) * sell_qty
+                        positions[sym]['qty'] -= sell_qty
+                        positions[sym]['cost'] -= avg_entry * sell_qty
+            
+            # Summary
+            lines.append(f"📊 *Overview*")
+            lines.append(f"Total Trades: *{total_trades}*")
+            lines.append(f"Buy Orders: *{len(buy_trades)}*")
+            lines.append(f"Sell Orders: *{len(sell_trades)}*")
+            lines.append("")
+            
+            lines.append(f"🎯 *Performance*")
+            lines.append(f"Win Rate: *{win_rate:.1f}%* ({wins}/{total_sells})")
+            lines.append(f"Wins: 🟢 {wins}")
+            lines.append(f"Losses: 🔴 {losses}")
+            lines.append(f"Realized P&L: *${realized_pnl:+.2f}*")
+            lines.append("")
+            
+            # Best/worst performers
+            pair_performance = {}
+            for t in sell_trades:
+                sym = t.get('symbol', '')
+                exit_reason = t.get('exit_reason', '')
+                if sym not in pair_performance:
+                    pair_performance[sym] = {'wins': 0, 'losses': 0}
+                if exit_reason == 'TAKE_PROFIT':
+                    pair_performance[sym]['wins'] += 1
+                elif exit_reason == 'STOP_LOSS':
+                    pair_performance[sym]['losses'] += 1
+            
+            if pair_performance:
+                lines.append(f"📈 *Top Pairs*")
+                sorted_pairs = sorted(pair_performance.items(), 
+                                    key=lambda x: x[1]['wins'] - x[1]['losses'], 
+                                    reverse=True)[:5]
+                for sym, stats in sorted_pairs:
+                    total = stats['wins'] + stats['losses']
+                    if total > 0:
+                        wr = stats['wins'] / total * 100
+                        lines.append(f"• `{sym}`: {stats['wins']}W/{stats['losses']}L ({wr:.0f}%)")
+                lines.append("")
+            
+            lines.append(f"💡 Tip: Use /signals to see current opportunities")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"❌ Error: {str(e)[:50]}"
+    
     elif cmd == '/signals':
         """Show current trading signals for all pairs"""
         try:
@@ -732,6 +831,7 @@ def handle_command(cmd):
                 "/sentiment - News sentiment report\n"
                 "/discovery - Trading opportunities\n"
                 "/strategy_status - Check current strategy and pending switches\n"
+                "/performance - Trading performance metrics (win rate, Pu0026L)\n"
                 "/abort_switch - Cancel pending strategy switch\n"
                 "/confirm_switch - Execute pending switch immediately\n"
                 "/help - This message")
