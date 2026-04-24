@@ -572,6 +572,25 @@ def mean_reversion_signal(klines):
     if r > 70 or current >= upper * 0.98: return "SELL"
     return "HOLD"
 
+def rsi_signal(klines, htf_klines=None):
+    """RSI Strategy with optional HTF filter."""
+    prices = [k["c"] for k in klines]
+    r = rsi(prices)
+    current = prices[-1]
+    
+    # HTF filter check
+    htf_ok = bullish_htf_filter(htf_klines) if htf_klines else True
+    
+    # Buy signal: RSI oversold (< 30) and HTF confirms
+    if htf_ok and r < 30:
+        return "BUY"
+    
+    # Sell signal: RSI overbought (> 70)
+    if r > 70:
+        return "SELL"
+    
+    return "HOLD"
+
 def ema_signal(klines, htf_klines=None):
     """EMA Crossover Strategy with optional HTF filter."""
     prices = [k["c"] for k in klines]
@@ -652,6 +671,8 @@ def run():
                 signal = mean_reversion_signal(klines)
             elif STRATEGY == "ema":
                 signal = ema_signal(klines, htf_klines)
+            elif STRATEGY == "rsi":
+                signal = rsi_signal(klines, htf_klines)
             elif STRATEGY == "dca":
                 signal = "BUY"
             else:
